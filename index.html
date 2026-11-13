@@ -1,0 +1,1209 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>多端 SSH 配置台</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600&display=swap">
+<style>
+/* Layout: editor on the left, sticky output console on the right; stacks to one column on narrow screens */
+:root {
+  --bg: #F2F4F7; --surface: #FFFFFF; --sunken: #E9EDF2; --ink: #172031; --muted: #5A6577; --line: #D8DEE7;
+  --accent: #1E5BB8; --accent-soft: #E3ECF9; --on-accent: #FFFFFF;
+  --code-bg: #121A26; --code-fg: #D9E2EE; --code-dim: #8494AB;
+  --ok: #1D7A46; --warn: #8F5400; --warn-soft: #FBF1DF; --bad: #B53636;
+  --f-sans: "IBM Plex Sans", "PingFang SC", "Microsoft YaHei", "Noto Sans SC", system-ui, sans-serif;
+  --f-mono: "IBM Plex Mono", ui-monospace, "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #0E131B; --surface: #151C27; --sunken: #1B2431; --ink: #E3E9F2; --muted: #93A0B4; --line: #283345;
+    --accent: #7AA7F2; --accent-soft: #1C2B44; --on-accent: #0E131B;
+    --code-bg: #0A0F16; --code-fg: #D9E2EE; --code-dim: #75849C;
+    --ok: #5CC48A; --warn: #E3A84A; --warn-soft: #2A2214; --bad: #F07C7C;
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #0E131B; --surface: #151C27; --sunken: #1B2431; --ink: #E3E9F2; --muted: #93A0B4; --line: #283345;
+  --accent: #7AA7F2; --accent-soft: #1C2B44; --on-accent: #0E131B;
+  --code-bg: #0A0F16; --code-fg: #D9E2EE; --code-dim: #75849C;
+  --ok: #5CC48A; --warn: #E3A84A; --warn-soft: #2A2214; --bad: #F07C7C;
+  color-scheme: dark;
+}
+* { box-sizing: border-box; }
+body { background: var(--bg); color: var(--ink); font-family: var(--f-sans); font-size: 14px; line-height: 1.55; }
+.wrap { max-width: 1480px; margin: 0 auto; padding-block: 24px 48px; padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)); }
+header.top { display: grid; gap: 6px; margin-bottom: 20px; max-width: 72ch; }
+h1 { font-size: 24px; font-weight: 600; margin: 0; letter-spacing: -0.01em; text-wrap: balance; }
+h2 { font-size: 15px; font-weight: 600; margin: 0; }
+h3 { font-size: 14px; font-weight: 600; margin: 0; }
+.lede { margin: 0; color: var(--muted); }
+.notice { margin: 4px 0 0; font-size: 13px; color: var(--muted); display: flex; gap: 8px; align-items: baseline; }
+.notice b { color: var(--ink); font-weight: 500; }
+code, .mono { font-family: var(--f-mono); font-size: 0.92em; }
+p code, li code, td code { background: var(--sunken); padding: 1px 5px; border-radius: 4px; word-break: break-all; }
+
+.grid { display: grid; grid-template-columns: minmax(0, 5fr) minmax(0, 7fr); gap: 24px; align-items: start; }
+@media (max-width: 1020px) { .grid { grid-template-columns: minmax(0, 1fr); } }
+
+.editor { display: grid; gap: 16px; min-width: 0; }
+.panel { background: var(--surface); border: 1px solid var(--line); border-radius: 10px; padding: 16px; display: grid; gap: 12px; min-width: 0; }
+.panel-h { display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap; }
+.panel-h p { margin: 2px 0 0; color: var(--muted); font-size: 13px; }
+.list { display: grid; gap: 10px; }
+
+.card { border: 1px solid var(--line); border-radius: 8px; padding: 12px; display: grid; gap: 10px; background: var(--bg); min-width: 0; }
+.card-top { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+.card-top .alias-in { font-family: var(--f-mono); font-weight: 500; width: 9.5em; }
+.route { font-family: var(--f-mono); font-size: 12px; color: var(--muted); flex: 1; min-width: 0; overflow-wrap: anywhere; }
+.fields { display: grid; grid-template-columns: repeat(auto-fill, minmax(132px, 1fr)); gap: 10px; }
+.field { display: grid; gap: 4px; min-width: 0; }
+.field > span { font-size: 12px; color: var(--muted); }
+.wide { grid-column: 1 / -1; }
+.check { display: flex; gap: 8px; align-items: flex-start; font-size: 13px; cursor: pointer; }
+.check input { margin-top: 3px; accent-color: var(--accent); }
+
+input[type="text"], select, textarea {
+  font: inherit; color: var(--ink); background: var(--surface); border: 1px solid var(--line); border-radius: 6px;
+  padding: 6px 8px; width: 100%; min-width: 0;
+}
+input[type="text"]:focus-visible, select:focus-visible, textarea:focus-visible, button:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+textarea { font-family: var(--f-mono); font-size: 12px; min-height: 160px; resize: vertical; }
+
+button { font: inherit; cursor: pointer; border-radius: 6px; padding: 6px 12px; border: 1px solid var(--accent); background: var(--accent); color: var(--on-accent); font-weight: 500; }
+button.ghost { background: transparent; color: var(--muted); border-color: var(--line); font-weight: 400; }
+button.ghost:hover { color: var(--bad); border-color: var(--bad); }
+button.soft { background: var(--accent-soft); color: var(--accent); border-color: transparent; }
+
+.key-fields { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 10px; }
+
+#warnings { display: grid; gap: 6px; }
+.warn { background: var(--warn-soft); color: var(--ink); border-left: 3px solid var(--warn); border-radius: 4px; padding: 8px 10px; font-size: 13px; }
+.warn b { color: var(--warn); font-weight: 600; margin-right: 6px; }
+
+details.backup summary { cursor: pointer; font-weight: 500; }
+details.backup .row { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 8px; }
+
+.output { position: sticky; top: calc(env(safe-area-inset-top, 0px) + 16px); max-height: calc(100vh - 32px); display: flex; flex-direction: column; gap: 10px; min-width: 0; }
+@media (max-width: 1020px) { .output { position: static; max-height: none; } }
+.tabs { display: flex; flex-wrap: wrap; gap: 6px; }
+.tabs button { background: var(--surface); color: var(--ink); border: 1px solid var(--line); font-weight: 400; font-size: 13px; padding: 5px 10px; }
+.tabs button.file { font-family: var(--f-mono); font-size: 12.5px; }
+.tabs button[aria-selected="true"] { background: var(--accent-soft); color: var(--accent); border-color: var(--accent); font-weight: 500; }
+.out-head { display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap; }
+.out-head .meta { display: grid; gap: 2px; min-width: 0; }
+.out-head .fname { font-family: var(--f-mono); font-weight: 500; overflow-wrap: anywhere; }
+.out-head .hint { color: var(--muted); font-size: 13px; }
+.out-body { min-height: 0; flex: 1; display: flex; flex-direction: column; }
+pre.code { margin: 0; background: var(--code-bg); color: var(--code-fg); font-family: var(--f-mono); font-size: 12.5px; line-height: 1.6;
+  padding: 14px 16px; border-radius: 10px; overflow: auto; flex: 1; min-height: 240px; tab-size: 2; }
+@media (max-width: 1020px) { pre.code { max-height: 72vh; } }
+.doc { background: var(--surface); border: 1px solid var(--line); border-radius: 10px; padding: 18px 20px; overflow: auto; flex: 1; }
+.doc > * + * { margin-top: 14px; }
+.doc p, .doc li { max-width: 72ch; }
+ol.steps { padding-left: 0; list-style: none; counter-reset: s; display: grid; gap: 14px; margin: 0; }
+ol.steps > li { counter-increment: s; display: grid; grid-template-columns: 28px minmax(0, 1fr); gap: 4px 10px; }
+ol.steps > li::before { content: counter(s); grid-row: span 3; width: 24px; height: 24px; border-radius: 50%; background: var(--accent-soft); color: var(--accent); font-weight: 600; font-size: 12px; display: grid; place-items: center; font-variant-numeric: tabular-nums; }
+ol.steps p { margin: 0; color: var(--muted); }
+.doc h3.sec { font-size: 13px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--muted); padding-top: 6px; border-top: 1px solid var(--line); }
+pre.mini { margin: 0; background: var(--code-bg); color: var(--code-fg); font-family: var(--f-mono); font-size: 12.5px; padding: 12px 14px; border-radius: 8px; overflow-x: auto; }
+.doc ul { margin: 0; padding-left: 20px; display: grid; gap: 6px; }
+.tbl { overflow-x: auto; }
+table { border-collapse: collapse; width: 100%; font-size: 13px; }
+th, td { text-align: left; vertical-align: top; padding: 8px 10px; border-bottom: 1px solid var(--line); }
+th { font-weight: 600; color: var(--muted); font-size: 12px; }
+td:first-child { font-family: var(--f-mono); font-size: 12px; min-width: 14em; }
+.toast { color: var(--ok); font-size: 13px; }
+@media (prefers-reduced-motion: no-preference) { button { transition: background .12s, color .12s, border-color .12s; } }
+</style>
+</head>
+<body>
+
+<div class="wrap">
+  <header class="top">
+    <h1>多端 SSH 配置台</h1>
+    <p class="lede">填好机器和 Git 账号，生成 Linux、macOS、Windows 通用的 SSH 配置、一键初始化脚本和批量 git 脚本。复制保存后在你自己的电脑上运行。</p>
+    <p class="notice"><b>不填密码</b>本页不会连接任何服务器，填的内容只保存在当前浏览器。下面是示例数据，换成你自己的即可。</p>
+  </header>
+
+  <main class="grid">
+    <section class="editor" aria-label="填写">
+      <div class="panel">
+        <div class="panel-h">
+          <div><h2>机器</h2><p>所有要登录、要执行 git 的服务器和电脑</p></div>
+          <button type="button" id="addMachine">添加机器</button>
+        </div>
+        <div class="list" id="machines"></div>
+      </div>
+
+      <div class="panel">
+        <div class="panel-h">
+          <div><h2>Git 账号</h2><p>每个账号一把密钥，用别名区分，例如 git@github-work:org/repo.git</p></div>
+          <button type="button" id="addGit">添加账号</button>
+        </div>
+        <div class="list" id="gits"></div>
+      </div>
+
+      <div class="panel">
+        <h2>服务器登录密钥</h2>
+        <div class="key-fields">
+          <label class="field" for="keyName"><span>密钥文件名（放在 ~/.ssh/ 下）</span><input type="text" id="keyName"></label>
+          <label class="field" for="keyComment"><span>密钥备注</span><input type="text" id="keyComment"></label>
+        </div>
+      </div>
+
+      <div id="warnings" aria-live="polite"></div>
+
+      <details class="panel backup">
+        <summary>备份或迁移这些设置</summary>
+        <p class="lede" style="font-size:13px">在另一台设备打开本页时，把这段内容粘贴进来并点「应用」。</p>
+        <textarea id="backupText" spellcheck="false" aria-label="设置 JSON"></textarea>
+        <div class="row">
+          <button type="button" class="soft" id="applyBackup">应用</button>
+          <button type="button" class="ghost" id="resetSample">恢复示例数据</button>
+          <span class="toast" id="backupMsg"></span>
+        </div>
+      </details>
+    </section>
+
+    <section class="output" aria-label="生成结果">
+      <nav class="tabs" id="tabs" role="tablist"></nav>
+      <div class="out-head">
+        <div class="meta"><span class="fname" id="outName"></span><span class="hint" id="outHint"></span></div>
+        <div style="display:flex;gap:10px;align-items:center"><span class="toast" id="copyMsg"></span><button type="button" id="copyBtn">复制</button></div>
+      </div>
+      <div class="out-body" id="outBody"></div>
+    </section>
+  </main>
+</div>
+
+<script type="text/plain" id="tpl-init-sh">
+#!/usr/bin/env bash
+# fleet-init.sh  生成于 {{DATE}}
+# 在你日常操作的 Linux / macOS / WSL 本机运行一次：  bash fleet-init.sh
+# 步骤：生成密钥 → 写 SSH 配置 → 加载 ssh-agent → 设置 Git 身份
+#       → 给每台机器装公钥（每台最多输一次密码）→ 下发远端配置 → 自检
+# 可以重复运行：已完成的步骤会跳过，或覆盖成相同内容。
+set -uo pipefail
+
+SSH_DIR="$HOME/.ssh"
+KEY="$SSH_DIR/{{KEY}}"
+FAILED=0
+mkdir -p "$SSH_DIR" && chmod 700 "$SSH_DIR"
+
+say() { printf '\n\033[1;34m==>\033[0m %s\n' "$*"; }
+ok()  { printf '  \033[32mOK\033[0m   %s\n' "$*"; }
+bad() { printf '  \033[31mFAIL\033[0m %s\n' "$*"; FAILED=1; }
+b64f() { base64 < "$1" | tr -d '\n'; }
+
+make_key() {  # make_key 文件 备注
+  [ -f "$1" ] || ssh-keygen -t ed25519 -f "$1" -C "$2" || { bad "生成 $1 失败"; return 1; }
+  chmod 600 "$1"; chmod 644 "$1.pub"; ok "$1"
+}
+
+run_ps() {  # run_ps 主机 脚本：在 Windows 上执行 PowerShell（编码传输，不受默认 shell 和引号影响）
+  local enc
+  enc="$(printf '%s' "$2" | iconv -f UTF-8 -t UTF-16LE | base64 | tr -d '\n')"
+  ssh "$1" "powershell -NoProfile -NonInteractive -EncodedCommand $enc"
+}
+
+PS_ADDKEY=$(cat <<'PS'
+$k = '__PUB__'
+$ids = [Security.Principal.WindowsIdentity]::GetCurrent().Groups | ForEach-Object { $_.Value }
+$admin = $ids -contains 'S-1-5-32-544'
+if ($admin) { $f = Join-Path $env:ProgramData 'ssh\administrators_authorized_keys' }
+else { $d = Join-Path $env:USERPROFILE '.ssh'; New-Item -ItemType Directory -Force $d | Out-Null; $f = Join-Path $d 'authorized_keys' }
+$cur = ''
+if (Test-Path $f) { $cur = [IO.File]::ReadAllText($f) }
+if (-not $cur.Contains($k)) {
+  if ($cur.Length -gt 0 -and -not $cur.EndsWith("`n")) { $cur += "`r`n" }
+  [IO.File]::WriteAllText($f, $cur + $k + "`r`n", (New-Object Text.UTF8Encoding $false))
+}
+if ($admin) { icacls.exe $f /inheritance:r /grant '*S-1-5-32-544:F' /grant '*S-1-5-18:F' | Out-Null }
+Write-Output "key installed: $f"
+PS
+)
+
+PS_INCLUDE=$(cat <<'PS'
+$d = Join-Path $env:USERPROFILE '.ssh'
+$c = Join-Path $d 'config'
+$t = ''
+if (Test-Path $c) { $t = [IO.File]::ReadAllText($c) }
+if ($t -notmatch '(?m)^Include ~/.ssh/fleet.conf') { [IO.File]::WriteAllText($c, "Include ~/.ssh/fleet.conf`n" + $t, (New-Object Text.UTF8Encoding $false)) }
+PS
+)
+
+install_key() {  # install_key 主机 系统
+  if ssh -n -o BatchMode=yes -o ConnectTimeout=8 "$1" exit >/dev/null 2>&1; then ok "$1 已能用密钥登录，跳过"; return 0; fi
+  echo "  首次连接会显示主机指纹，核对后输入 yes；然后输入 $1 的登录密码"
+  if [ "$2" = windows ]; then
+    run_ps "$1" "${PS_ADDKEY//__PUB__/$PUB}"
+  elif command -v ssh-copy-id >/dev/null; then
+    ssh-copy-id -i "$KEY.pub" "$1"
+  else
+    ssh "$1" 'umask 077; mkdir -p ~/.ssh; cat >> ~/.ssh/authorized_keys' < "$KEY.pub"
+  fi || { bad "$1 安装公钥失败"; return 1; }
+  ok "$1 公钥已安装"
+}
+
+put_file() {  # put_file 主机 系统 文件名 base64内容：写到对方的 ~/.ssh/ 下
+  if [ "$2" = windows ]; then
+    printf '%s' "$4" | run_ps "$1" "\$b = [Console]::In.ReadToEnd().Trim(); \$d = Join-Path \$env:USERPROFILE '.ssh'; New-Item -ItemType Directory -Force \$d | Out-Null; [IO.File]::WriteAllBytes((Join-Path \$d '$3'), [Convert]::FromBase64String(\$b))"
+  else
+    printf '%s' "$4" | ssh "$1" "mkdir -p ~/.ssh && chmod 700 ~/.ssh && base64 -d > ~/.ssh/$3 && chmod 600 ~/.ssh/$3"
+  fi
+}
+
+add_include() {  # 让对方 ~/.ssh/config 第一行引用 fleet.conf
+  if [ "$2" = windows ]; then
+    run_ps "$1" "$PS_INCLUDE"
+  else
+    ssh -n "$1" 'c=~/.ssh/config; touch $c && chmod 600 $c; grep -qxF "Include ~/.ssh/fleet.conf" $c || { printf "Include ~/.ssh/fleet.conf\n" | cat - $c > $c.tmp && mv $c.tmp $c; }'
+  fi
+}
+
+push_remote() {  # push_remote 主机 系统 配置base64 [Git公钥文件...]
+  local h="$1" os="$2" conf="$3"; shift 3
+  { put_file "$h" "$os" fleet.conf "$conf" && add_include "$h" "$os"; } || { bad "$h 远端配置下发失败"; return 1; }
+  put_file "$h" "$os" "$(basename "$KEY").pub" "$(b64f "$KEY.pub")"
+  for f in "$@"; do [ -f "$f" ] && put_file "$h" "$os" "$(basename "$f")" "$(b64f "$f")"; done
+  ok "$h 远端配置和公钥已下发，可以在这台上继续 ssh 和 git"
+}
+
+say "1/6 生成密钥（已存在的不会覆盖）"
+make_key "$KEY" {{COMMENT}}
+{{GITKEYS}}
+PUB="$(cat "$KEY.pub")"
+
+say "2/6 写入本机 SSH 配置 ~/.ssh/fleet.conf"
+cat > "$SSH_DIR/fleet.conf" <<'EOF'
+{{LOCAL_CONF}}
+EOF
+chmod 600 "$SSH_DIR/fleet.conf"
+CFG="$SSH_DIR/config"; touch "$CFG"; chmod 600 "$CFG"
+if ! grep -qxF 'Include ~/.ssh/fleet.conf' "$CFG"; then
+  cp "$CFG" "$CFG.bak.$(date +%Y%m%d%H%M%S)"
+  { echo 'Include ~/.ssh/fleet.conf'; cat "$CFG"; } > "$CFG.tmp" && mv "$CFG.tmp" "$CFG"
+fi
+ok "~/.ssh/config 已引用 fleet.conf（原文件已备份）"
+
+say "3/6 把密钥加载进 ssh-agent（有口令的话每把输一次）"
+if [ -z "${SSH_AUTH_SOCK:-}" ]; then
+  eval "$(ssh-agent -s)" >/dev/null
+  echo "  本次临时启动了 ssh-agent。想开机后只输一次口令，请按「快速切换」页设置 keychain。"
+fi
+ADD="ssh-add"; [ "$(uname)" = Darwin ] && ADD="ssh-add --apple-use-keychain"
+for k in "$KEY"{{GITKEY_PATHS}}; do
+  [ -f "$k" ] || continue
+  if $ADD "$k"; then ok "已加载 $(basename "$k")"; else bad "加载 $k 失败"; fi
+done
+
+say "4/6 设置 Git 身份（按目录自动切换）"
+if command -v git >/dev/null; then
+{{GITCFG}}
+else
+  bad "没有找到 git，请先安装后重新运行"
+fi
+
+say "5/6 给每台机器安装公钥，并下发远端配置"
+{{MACHINES}}
+
+say "6/6 自检"
+for h in {{ALIASES}}; do
+  if ssh -n -o BatchMode=yes -o ConnectTimeout=8 "$h" exit >/dev/null 2>&1; then ok "$h 免密登录正常"
+  else bad "$h 还不能免密登录（运行 ssh -v $h 查看原因）"; fi
+done
+{{PUBPRINT}}
+echo
+if [ "$FAILED" = 0 ]; then say "全部完成"; else say "有失败项，请看上面标 FAIL 的行"; fi
+</script>
+
+<script type="text/plain" id="tpl-init-ps1">
+# fleet-init.ps1  generated {{DATE}}
+# Run once on your Windows PC. The first run must be in an elevated PowerShell (Run as Administrator):
+#   powershell -ExecutionPolicy Bypass -File .\fleet-init.ps1
+# Steps: ssh-agent service -> keys -> local SSH config -> load keys -> Git settings
+#        -> install key on every machine (password at most once each) -> push remote config -> self-check
+# Safe to run again.
+$ErrorActionPreference = 'Continue'
+$SshDir = Join-Path $HOME '.ssh'
+$Key = Join-Path $SshDir '{{KEY}}'
+$Utf8 = New-Object System.Text.UTF8Encoding $false
+$script:Failed = $false
+New-Item -ItemType Directory -Force $SshDir | Out-Null
+
+function Say($m) { Write-Host ''; Write-Host "==> $m" -ForegroundColor Cyan }
+function Ok($m) { Write-Host "  OK   $m" -ForegroundColor Green }
+function Bad($m) { Write-Host "  FAIL $m" -ForegroundColor Red; $script:Failed = $true }
+function B64File($f) { [Convert]::ToBase64String([IO.File]::ReadAllBytes($f)) }
+
+function New-Key($f, $comment) {
+  if (-not (Test-Path $f)) { ssh-keygen -t ed25519 -f $f -C $comment }
+  if (Test-Path $f) {
+    icacls $f /inheritance:r /grant:r "$($env:USERNAME):F" | Out-Null
+    Ok $f
+  } else { Bad "could not create $f" }
+}
+
+function Invoke-RemotePs($h, $ps) {
+  $e = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($ps))
+  ssh $h "powershell -NoProfile -NonInteractive -EncodedCommand $e" | Out-Host
+}
+function Invoke-RemoteSh($h, $sh) {
+  $b = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($sh))
+  ssh $h "echo $b | base64 -d | sh" | Out-Host
+}
+
+$PsAddKey = @'
+$k = '__PUB__'
+$ids = [Security.Principal.WindowsIdentity]::GetCurrent().Groups | ForEach-Object { $_.Value }
+$admin = $ids -contains 'S-1-5-32-544'
+if ($admin) { $f = Join-Path $env:ProgramData 'ssh\administrators_authorized_keys' }
+else { $d = Join-Path $env:USERPROFILE '.ssh'; New-Item -ItemType Directory -Force $d | Out-Null; $f = Join-Path $d 'authorized_keys' }
+$cur = ''
+if (Test-Path $f) { $cur = [IO.File]::ReadAllText($f) }
+if (-not $cur.Contains($k)) {
+  if ($cur.Length -gt 0 -and -not $cur.EndsWith("`n")) { $cur += "`r`n" }
+  [IO.File]::WriteAllText($f, $cur + $k + "`r`n", (New-Object Text.UTF8Encoding $false))
+}
+if ($admin) { icacls.exe $f /inheritance:r /grant '*S-1-5-32-544:F' /grant '*S-1-5-18:F' | Out-Null }
+Write-Output "key installed: $f"
+'@
+
+$PsInclude = @'
+$d = Join-Path $env:USERPROFILE '.ssh'
+$c = Join-Path $d 'config'
+$t = ''
+if (Test-Path $c) { $t = [IO.File]::ReadAllText($c) }
+if ($t -notmatch '(?m)^Include ~/.ssh/fleet.conf') { [IO.File]::WriteAllText($c, "Include ~/.ssh/fleet.conf`n" + $t, (New-Object Text.UTF8Encoding $false)) }
+'@
+
+function Install-Key($h, $os) {
+  ssh -n -o BatchMode=yes -o ConnectTimeout=8 $h exit 2>$null | Out-Null
+  if ($LASTEXITCODE -eq 0) { Ok "$h already accepts the key, skipped"; return $true }
+  Write-Host "  First connection shows the host fingerprint: check it and type yes, then enter the password for $h"
+  $pub = (Get-Content "$Key.pub" -Raw).Trim()
+  if ($os -eq 'windows') { Invoke-RemotePs $h ($PsAddKey.Replace('__PUB__', $pub)) }
+  else { Invoke-RemoteSh $h "umask 077; mkdir -p ~/.ssh; touch ~/.ssh/authorized_keys; grep -qxF '$pub' ~/.ssh/authorized_keys || echo '$pub' >> ~/.ssh/authorized_keys" }
+  if ($LASTEXITCODE -eq 0) { Ok "$h key installed"; return $true }
+  Bad "$h key install failed"; return $false
+}
+
+function Put-File($h, $os, $name, $b64) {
+  if ($os -eq 'windows') {
+    $ps = "`$b = [Console]::In.ReadToEnd().Trim(); `$d = Join-Path `$env:USERPROFILE '.ssh'; New-Item -ItemType Directory -Force `$d | Out-Null; [IO.File]::WriteAllBytes((Join-Path `$d '$name'), [Convert]::FromBase64String(`$b))"
+    $e = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($ps))
+    $b64 | ssh $h "powershell -NoProfile -NonInteractive -EncodedCommand $e" | Out-Host
+  } else {
+    $b64 | ssh $h "mkdir -p ~/.ssh && chmod 700 ~/.ssh && tr -d '\r' | base64 -d > ~/.ssh/$name && chmod 600 ~/.ssh/$name" | Out-Host
+  }
+  return ($LASTEXITCODE -eq 0)
+}
+
+function Add-Include($h, $os) {
+  if ($os -eq 'windows') { Invoke-RemotePs $h $PsInclude }
+  else { Invoke-RemoteSh $h 'c=~/.ssh/config; touch $c && chmod 600 $c; grep -qxF "Include ~/.ssh/fleet.conf" $c || { printf "Include ~/.ssh/fleet.conf\n" | cat - $c > $c.tmp && mv $c.tmp $c; }' }
+}
+
+function Push-Remote($h, $os, $conf, $gitPubs) {
+  if (-not (Put-File $h $os 'fleet.conf' $conf)) { Bad "$h remote config push failed"; return }
+  Add-Include $h $os
+  [void](Put-File $h $os ((Split-Path $Key -Leaf) + '.pub') (B64File "$Key.pub"))
+  foreach ($f in $gitPubs) { if (Test-Path $f) { [void](Put-File $h $os (Split-Path $f -Leaf) (B64File $f)) } }
+  Ok "$h remote config and public keys pushed"
+}
+
+Say '1/7 ssh-agent service'
+$svc = Get-Service ssh-agent -ErrorAction SilentlyContinue
+if (-not $svc) { Bad 'OpenSSH Client is missing: Settings > System > Optional features > add "OpenSSH Client"'; exit 1 }
+if ($svc.StartType -ne 'Automatic') {
+  try { Set-Service ssh-agent -StartupType Automatic -ErrorAction Stop } catch { Bad 'Run this script once as Administrator to enable the ssh-agent service' }
+}
+if ((Get-Service ssh-agent).Status -ne 'Running') {
+  try { Start-Service ssh-agent -ErrorAction Stop; Ok 'ssh-agent running' } catch { Bad 'ssh-agent could not start' }
+} else { Ok 'ssh-agent running' }
+
+Say '2/7 keys (existing keys are kept)'
+New-Key $Key {{COMMENT}}
+{{GITKEYS}}
+
+Say '3/7 local SSH config'
+{{LOCAL_CONF}}
+[IO.File]::WriteAllText((Join-Path $SshDir 'fleet.conf'), $conf.Replace("`r", ''), $Utf8)
+$cfg = Join-Path $SshDir 'config'
+$t = ''
+if (Test-Path $cfg) { $t = [IO.File]::ReadAllText($cfg) }
+if ($t -notmatch '(?m)^Include ~/.ssh/fleet.conf') {
+  if ($t) { Copy-Item $cfg ($cfg + '.bak.' + (Get-Date -Format yyyyMMddHHmmss)) }
+  [IO.File]::WriteAllText($cfg, "Include ~/.ssh/fleet.conf`n" + $t, $Utf8)
+}
+Ok "$cfg includes fleet.conf"
+
+Say '4/7 load keys into ssh-agent (enter each passphrase once)'
+foreach ($k in @($Key{{GITKEY_PATHS}})) {
+  if (Test-Path $k) { ssh-add $k; if ($LASTEXITCODE -eq 0) { Ok "loaded $k" } else { Bad "could not load $k" } }
+}
+
+Say '5/7 Git settings'
+if (Get-Command git -ErrorAction SilentlyContinue) {
+  git config --global core.sshCommand 'C:/Windows/System32/OpenSSH/ssh.exe'
+  git config --global core.longpaths true
+{{GITCFG}}
+  Ok 'Git now uses Windows OpenSSH and the ssh-agent service'
+} else { Bad 'Git not found: install Git for Windows, then run this script again' }
+
+Say '6/7 install key on each machine and push remote config'
+{{MACHINES}}
+
+Say '7/7 self-check'
+foreach ($h in @({{ALIASES}})) {
+  ssh -n -o BatchMode=yes -o ConnectTimeout=8 $h exit 2>$null | Out-Null
+  if ($LASTEXITCODE -eq 0) { Ok "$h key login works" } else { Bad "$h still needs a password or is unreachable (try: ssh -v $h)" }
+}
+{{PUBPRINT}}
+Write-Host ''
+if ($script:Failed) { Say 'Finished with errors: see the FAIL lines above' } else { Say 'All done' }
+</script>
+
+<script type="text/plain" id="tpl-multi-sh">
+#!/usr/bin/env bash
+# multi-git.sh  生成于 {{DATE}}
+# 用法: ./multi-git.sh <pull|push|status|fetch> [-n] [-j 并发数] [-f hosts.csv] [-o 主机1,主机2]
+#   -n  只显示将要执行的操作，不真正执行（dry-run）
+#   -j  同时处理几个仓库，默认 6
+#   -o  只处理这些主机，逗号分隔
+set -uo pipefail
+ACTION="${1:-}"; shift || true
+DRY=0; JOBS=6; CSV="$(dirname "$0")/hosts.csv"; ONLY=""
+while getopts "nj:f:o:" opt; do
+  case $opt in n) DRY=1 ;; j) JOBS=$OPTARG ;; f) CSV=$OPTARG ;; o) ONLY=",$OPTARG," ;; *) exit 2 ;; esac
+done
+case "$ACTION" in
+  pull)   GIT_ARGS="pull --ff-only" ;;
+  push)   GIT_ARGS="push" ;;
+  status) GIT_ARGS="status -sb" ;;
+  fetch)  GIT_ARGS="fetch --all --prune" ;;
+  *) sed -n '3,6p' "$0"; exit 2 ;;
+esac
+[ -f "$CSV" ] || { echo "找不到 $CSV"; exit 2; }
+if [ -t 1 ]; then G=$'\033[32m'; R=$'\033[31m'; D=$'\033[2m'; N=$'\033[0m'; else G=; R=; D=; N=; fi
+
+TASKS=()
+while IFS=, read -r h os repos || [ -n "${h:-}" ]; do
+  h=${h//$'\r'/}; os=${os//$'\r'/}; repos=${repos//$'\r'/}
+  { [ -z "$h" ] || [ "$h" = alias ]; } && continue
+  [ -n "$ONLY" ] && [[ "$ONLY" != *",$h,"* ]] && continue
+  IFS=';' read -ra list <<< "$repos"
+  for r in ${list[@]+"${list[@]}"}; do [ -n "$r" ] && TASKS+=("$h|$os|$r"); done
+done < "$CSV"
+[ ${#TASKS[@]} -gt 0 ] || { echo "没有需要处理的仓库"; exit 0; }
+
+remote_cmd() {  # remote_cmd 系统 仓库路径
+  if [ "$1" = windows ]; then
+    local ps="Set-Location -LiteralPath '$2'; git $GIT_ARGS; exit \$LASTEXITCODE"
+    printf 'powershell -NoProfile -NonInteractive -EncodedCommand %s' \
+      "$(printf '%s' "$ps" | iconv -f UTF-8 -t UTF-16LE | base64 | tr -d '\n')"
+  else
+    printf "cd '%s' && GIT_TERMINAL_PROMPT=0 git %s" "$2" "$GIT_ARGS"
+  fi
+}
+
+TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT
+i=0
+for t in "${TASKS[@]}"; do
+  IFS='|' read -r h os repo <<< "$t"
+  if [ "$DRY" = 1 ]; then echo "${D}[dry-run]${N} $h  $repo  →  git $GIT_ARGS"; continue; fi
+  while [ "$(jobs -rp | wc -l)" -ge "$JOBS" ]; do sleep 0.2; done
+  echo "$h|$repo" > "$TMP/$i.meta"
+  ( ssh -n -o BatchMode=yes -o ConnectTimeout=10 "$h" "$(remote_cmd "$os" "$repo")" > "$TMP/$i.log" 2>&1
+    echo $? > "$TMP/$i.rc" ) &
+  i=$((i + 1))
+done
+[ "$DRY" = 1 ] && exit 0
+wait
+
+okc=0; failc=0
+for ((n = 0; n < i; n++)); do
+  IFS='|' read -r h repo < "$TMP/$n.meta"
+  rc=$(cat "$TMP/$n.rc" 2>/dev/null || echo 255)
+  if [ "$rc" = 0 ]; then printf '%sOK  %s %-10s %s\n' "$G" "$N" "$h" "$repo"; okc=$((okc + 1))
+  else printf '%sFAIL%s %-10s %s（退出码 %s）\n' "$R" "$N" "$h" "$repo" "$rc"; failc=$((failc + 1)); fi
+  sed 's/^/      /' "$TMP/$n.log"
+done
+echo; echo "完成：成功 $okc，失败 $failc"
+[ "$failc" = 0 ]
+</script>
+
+<script type="text/plain" id="tpl-multi-ps1">
+# multi-git.ps1  generated {{DATE}}
+# Usage: .\multi-git.ps1 pull|push|status|fetch [-DryRun] [-Jobs 6] [-Csv .\hosts.csv] [-Only web1,app1]
+param(
+  [Parameter(Mandatory = $true, Position = 0)][ValidateSet('pull', 'push', 'status', 'fetch')][string]$Action,
+  [switch]$DryRun,
+  [int]$Jobs = 6,
+  [string]$Csv = (Join-Path $PSScriptRoot 'hosts.csv'),
+  [string[]]$Only = @()
+)
+$gitArgs = @{ pull = 'pull --ff-only'; push = 'push'; status = 'status -sb'; fetch = 'fetch --all --prune' }[$Action]
+if (-not (Test-Path $Csv)) { Write-Host "hosts.csv not found: $Csv" -ForegroundColor Red; exit 2 }
+
+$tasks = foreach ($r in Import-Csv $Csv) {
+  if ($Only.Count -and ($Only -notcontains $r.alias)) { continue }
+  foreach ($repo in ($r.repos -split ';' | Where-Object { $_ })) {
+    if ($r.os -eq 'windows') {
+      $ps = "Set-Location -LiteralPath '$repo'; git $gitArgs; exit `$LASTEXITCODE"
+      $cmd = 'powershell -NoProfile -NonInteractive -EncodedCommand ' + [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($ps))
+    } else {
+      $cmd = "cd '$repo' && GIT_TERMINAL_PROMPT=0 git $gitArgs"
+    }
+    [pscustomobject]@{ Alias = $r.alias; Repo = $repo; Cmd = $cmd }
+  }
+}
+if (-not $tasks) { Write-Host 'Nothing to do'; exit 0 }
+if ($DryRun) {
+  foreach ($t in $tasks) { Write-Host "[dry-run] $($t.Alias)  $($t.Repo)  ->  git $gitArgs" -ForegroundColor DarkGray }
+  exit 0
+}
+
+$running = @()
+foreach ($t in $tasks) {
+  while (@($running | Where-Object { $_.State -eq 'Running' }).Count -ge $Jobs) { Start-Sleep -Milliseconds 200 }
+  $running += Start-Job -ArgumentList $t.Alias, $t.Repo, $t.Cmd -ScriptBlock {
+    param($a, $repo, $cmd)
+    $out = & ssh -n -o BatchMode=yes -o ConnectTimeout=10 $a $cmd 2>&1 | ForEach-Object { "$_" } | Out-String
+    [pscustomobject]@{ Alias = $a; Repo = $repo; Code = $LASTEXITCODE; Out = $out }
+  }
+}
+$results = $running | Wait-Job | Receive-Job
+$running | Remove-Job -Force
+
+$okc = 0; $failc = 0
+foreach ($r in $results) {
+  if ($r.Code -eq 0) { Write-Host ('OK   {0,-10} {1}' -f $r.Alias, $r.Repo) -ForegroundColor Green; $okc++ }
+  else { Write-Host ('FAIL {0,-10} {1} (exit {2})' -f $r.Alias, $r.Repo, $r.Code) -ForegroundColor Red; $failc++ }
+  if ($r.Out -and $r.Out.Trim()) { $r.Out.TrimEnd() -split "`n" | ForEach-Object { Write-Host "      $_" } }
+}
+Write-Host ''
+Write-Host "Done: $okc ok, $failc failed"
+if ($failc) { exit 1 }
+</script>
+
+<script type="text/plain" id="tpl-winsrv">
+# win-sshd-setup.ps1  generated {{DATE}}
+# Run on each Windows server in an elevated PowerShell (Run as Administrator):
+#   powershell -ExecutionPolicy Bypass -File .\win-sshd-setup.ps1 -Port 22
+# Needs Windows 10 1809+ / Windows Server 2019+. Server 2025 already ships OpenSSH.
+param([int]$Port = 22)
+$ErrorActionPreference = 'Stop'
+$cfg = Join-Path $env:ProgramData 'ssh\sshd_config'
+
+# 1. Install OpenSSH Server
+$cap = Get-WindowsCapability -Online | Where-Object Name -like 'OpenSSH.Server*'
+if ($cap.State -ne 'Installed') { Add-WindowsCapability -Online -Name $cap.Name | Out-Null }
+
+# 2. First start creates sshd_config; then set the port
+Start-Service sshd
+if ($Port -ne 22) {
+  Stop-Service sshd
+  (Get-Content $cfg) -replace '^#?Port\s+\d+', "Port $Port" | Set-Content $cfg -Encoding Ascii
+  Start-Service sshd
+}
+Set-Service sshd -StartupType Automatic
+
+# 3. Firewall
+$rule = "OpenSSH-Server-In-TCP-$Port"
+if (-not (Get-NetFirewallRule -Name $rule -ErrorAction SilentlyContinue)) {
+  New-NetFirewallRule -Name $rule -DisplayName "OpenSSH Server ($Port)" -Enabled True -Direction Inbound -Protocol TCP -Action Allow -LocalPort $Port | Out-Null
+}
+
+# 4. Git must be on PATH for multi-git
+if (-not (Get-Command git -ErrorAction SilentlyContinue)) {
+  Write-Host 'Git not found. Install it with: winget install --id Git.Git -e' -ForegroundColor Yellow
+}
+Write-Host "sshd is running on port $Port" -ForegroundColor Green
+
+# Optional: PowerShell as the default SSH shell (the generated scripts work either way)
+# New-ItemProperty -Path 'HKLM:\SOFTWARE\OpenSSH' -Name DefaultShell -Value 'C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe' -PropertyType String -Force
+
+# Optional, only after key login works for every account you use: turn off password login
+# (Get-Content $cfg) -replace '^#?PasswordAuthentication\s+\w+', 'PasswordAuthentication no' | Set-Content $cfg -Encoding Ascii
+# Restart-Service sshd
+</script>
+
+<script>
+(function () {
+  'use strict';
+  var STORE = 'fleet-kit-v1', TAB_STORE = 'fleet-kit-tab';
+  var SAMPLE = {
+    key: 'id_ed25519_fleet',
+    comment: 'fleet-key',
+    machines: [
+      { alias: 'web1', os: 'linux', host: '10.0.0.11', port: '22', user: 'root', auth: 'key', jump: '', fwd: true, repos: '/srv/www/site;/opt/api' },
+      { alias: 'db1', os: 'linux', host: '10.0.0.12', port: '2222', user: 'admin', auth: 'password', jump: '', fwd: false, repos: '' },
+      { alias: 'app1', os: 'linux', host: '192.168.1.20', port: '22', user: 'deploy', auth: 'key', jump: 'web1', fwd: true, repos: '/home/deploy/app' },
+      { alias: 'win-srv', os: 'windows', host: '10.0.0.30', port: '22', user: 'Administrator', auth: 'password', jump: '', fwd: false, repos: 'D:\\code\\portal' }
+    ],
+    git: [
+      { alias: 'github-work', host: 'github.com', key: 'id_ed25519_work', name: 'Your Name', email: 'you@company.com', dir: '~/work/' },
+      { alias: 'github-personal', host: 'github.com', key: 'id_ed25519_personal', name: 'Your Name', email: 'you@example.com', dir: '~/personal/' }
+    ]
+  };
+
+  function clone(o) { return JSON.parse(JSON.stringify(o)); }
+  function valid(s) { return s && typeof s === 'object' && Array.isArray(s.machines) && Array.isArray(s.git) && typeof s.key === 'string'; }
+  var state = null;
+  try { state = JSON.parse(localStorage.getItem(STORE)); } catch (e) { state = null; }
+  if (!valid(state)) state = clone(SAMPLE);
+  function save() { try { localStorage.setItem(STORE, JSON.stringify(state)); } catch (e) { /* storage unavailable */ } }
+
+  var $ = function (s) { return document.querySelector(s); };
+  function esc(s) { return String(s == null ? '' : s).replace(/[&<>"]/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]; }); }
+  function shq(s) { return "'" + String(s).replace(/'/g, "'\\''") + "'"; }
+  function psq(s) { return "'" + String(s).replace(/'/g, "''") + "'"; }
+  function isAscii(s) { return /^[\x00-\x7f]*$/.test(s); }
+  function b64u8(s) { var b = new TextEncoder().encode(s), bin = ''; for (var i = 0; i < b.length; i++) bin += String.fromCharCode(b[i]); return btoa(bin); }
+  function psStr(s) { s = String(s); return isAscii(s) ? psq(s) : "([Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('" + b64u8(s) + "')))"; }
+  function tpl(id) { return document.getElementById(id).textContent.replace(/^\n/, ''); }
+  function fill(t, map) { Object.keys(map).forEach(function (k) { t = t.split('{{' + k + '}}').join(map[k]); }); return t; }
+  function today() { return new Date().toISOString().slice(0, 10); }
+
+  function machines() { return state.machines.filter(function (m) { return m.alias; }); }
+  function gits() { return state.git.filter(function (g) { return g.alias && g.key; }); }
+  function byAlias(a) { return state.machines.find(function (m) { return m.alias === a; }); }
+  function gitDir(d) { d = (d || '').trim(); if (!d) return ''; d = d.replace(/\\/g, '/'); return /\/$/.test(d) ? d : d + '/'; }
+
+  function route(m) {
+    var chain = [m.alias || '?'], seen = {}, cur = m;
+    seen[m.alias] = 1;
+    while (cur && cur.jump) {
+      if (seen[cur.jump]) { chain.unshift('(循环)'); break; }
+      seen[cur.jump] = 1;
+      chain.unshift(cur.jump);
+      cur = byAlias(cur.jump);
+    }
+    return '本机 → ' + chain.join(' → ');
+  }
+
+  function ordered() {
+    var ms = machines(), done = {}, out = [], progress = true;
+    while (out.length < ms.length && progress) {
+      progress = false;
+      ms.forEach(function (m) {
+        if (done[m.alias]) return;
+        if (!m.jump || done[m.jump] || !byAlias(m.jump)) { out.push(m); done[m.alias] = 1; progress = true; }
+      });
+    }
+    ms.forEach(function (m) { if (!done[m.alias]) out.push(m); });
+    return out;
+  }
+
+  /* ---------- generators ---------- */
+  function sshConfig(flavor, from) {
+    var remote = !!from, L = [];
+    var idf = function (k) { return '~/.ssh/' + k + (remote ? '.pub' : ''); };
+    L.push('# fleet.conf - generated ' + today() + (remote ? ' for ' + from : ''));
+    L.push('# Referenced by the first line of ~/.ssh/config:  Include ~/.ssh/fleet.conf');
+    if (remote) L.push('# IdentityFile points to .pub files: the private key stays on your PC and arrives via agent forwarding');
+    L.push('');
+    var ms = machines().filter(function (m) { return m.alias !== from; });
+    ms.forEach(function (m) {
+      L.push('Host ' + m.alias);
+      L.push('  HostName ' + (m.host || '<IP-or-domain>'));
+      if (m.port && String(m.port) !== '22') L.push('  Port ' + m.port);
+      if (m.user) L.push('  User ' + m.user);
+      L.push('  IdentityFile ' + idf(state.key));
+      L.push('  IdentitiesOnly yes');
+      if (m.jump && m.jump !== from) L.push('  ProxyJump ' + m.jump);
+      if (m.fwd) L.push('  ForwardAgent yes');
+      L.push('');
+    });
+    gits().forEach(function (g) {
+      L.push('# Git account: git clone git@' + g.alias + ':<org>/<repo>.git');
+      L.push('Host ' + g.alias);
+      L.push('  HostName ' + (g.host || 'github.com'));
+      L.push('  User git');
+      L.push('  IdentityFile ' + idf(g.key));
+      L.push('  IdentitiesOnly yes');
+      L.push('');
+    });
+    if (ms.length) {
+      L.push('Host ' + ms.map(function (m) { return m.alias; }).join(' '));
+      L.push('  ServerAliveInterval 30');
+      L.push('  ServerAliveCountMax 3');
+      if (!remote) L.push('  AddKeysToAgent yes');
+      if (flavor === 'unix') {
+        L.push('  # Reuse one connection per host: the password or passphrase is asked once');
+        L.push('  ControlMaster auto');
+        L.push('  ControlPath ~/.ssh/cm-%C');
+        L.push('  ControlPersist 10m');
+      }
+    }
+    return L.join('\n').replace(/\n+$/, '') + '\n';
+  }
+
+  function genInitSh() {
+    var gs = gits();
+    var gitKeys = gs.map(function (g) { return 'make_key "$SSH_DIR/' + g.key + '" ' + shq(g.alias); }).join('\n');
+    var gitKeyPaths = gs.map(function (g) { return ' "$SSH_DIR/' + g.key + '"'; }).join('');
+    var gitCfg = [];
+    gs.forEach(function (g) {
+      var f = '~/.gitconfig-' + g.alias, dir = gitDir(g.dir);
+      if (dir) gitCfg.push('  git config --global ' + shq('includeIf.gitdir:' + dir + '.path') + ' ' + shq(f));
+      if (g.name) gitCfg.push('  git config -f "$HOME/.gitconfig-' + g.alias + '" user.name ' + shq(g.name));
+      if (g.email) gitCfg.push('  git config -f "$HOME/.gitconfig-' + g.alias + '" user.email ' + shq(g.email));
+      gitCfg.push('  ok ' + shq(g.alias + (dir ? '：' + dir + ' 下的仓库自动使用这个身份' : '：未填目录，需在仓库里手动设置 user.name / user.email')));
+    });
+    if (!gitCfg.length) gitCfg.push('  ok "没有填写 Git 账号，跳过"');
+    var pubFiles = gs.map(function (g) { return ' "$SSH_DIR/' + g.key + '.pub"'; }).join('');
+    var mBlocks = ordered().map(function (m) {
+      var os = m.os === 'windows' ? 'windows' : 'linux';
+      var L = ['echo; echo ' + shq('[' + m.alias + '] ' + os + ' ' + (m.host || '') + (m.jump ? '（经 ' + m.jump + '）' : '')) ];
+      if (m.fwd) {
+        L.push('install_key ' + shq(m.alias) + ' ' + os + ' && push_remote ' + shq(m.alias) + ' ' + os + " '" + b64u8(sshConfig(os === 'windows' ? 'windows' : 'unix', m.alias)) + "'" + pubFiles);
+      } else {
+        L.push('install_key ' + shq(m.alias) + ' ' + os + '   # 未开启 Agent 转发：只装公钥，不下发远端配置');
+      }
+      return L.join('\n');
+    }).join('\n\n');
+    var pubPrint = gs.length ? ['echo', 'echo "把下面的公钥加到对应的 Git 平台（个人设置里的 SSH Keys，或仓库的 Deploy Keys），然后用 ssh -T 测试："']
+      .concat(gs.map(function (g) { return 'echo ' + shq('--- ' + g.alias + '（测试：ssh -T ' + g.alias + '）') + '; cat "$SSH_DIR/' + g.key + '.pub"'; })).join('\n') : '';
+    return fill(tpl('tpl-init-sh'), {
+      DATE: today(), KEY: state.key, COMMENT: shq(state.comment || 'fleet-key'),
+      GITKEYS: gitKeys, GITKEY_PATHS: gitKeyPaths, GITCFG: gitCfg.join('\n'),
+      LOCAL_CONF: sshConfig('unix', null).replace(/\n$/, ''),
+      MACHINES: mBlocks || 'echo "还没有填写机器"',
+      ALIASES: machines().map(function (m) { return shq(m.alias); }).join(' ') || '',
+      PUBPRINT: pubPrint
+    });
+  }
+
+  function genInitPs() {
+    var gs = gits();
+    var gitKeys = gs.map(function (g) { return 'New-Key (Join-Path $SshDir ' + psq(g.key) + ') ' + psStr(g.alias); }).join('\n');
+    var gitKeyPaths = gs.map(function (g) { return ', (Join-Path $SshDir ' + psq(g.key) + ')'; }).join('');
+    var gitPubs = '@(' + gs.map(function (g) { return '(Join-Path $SshDir ' + psq(g.key + '.pub') + ')'; }).join(', ') + ')';
+    var gitCfg = [];
+    gs.forEach(function (g) {
+      var f = '~/.gitconfig-' + g.alias, dir = gitDir(g.dir), local = '(Join-Path $HOME ' + psq('.gitconfig-' + g.alias) + ')';
+      if (dir) gitCfg.push('  git config --global ' + psStr('includeIf.gitdir/i:' + dir + '.path') + ' ' + psStr(f));
+      if (g.name) gitCfg.push('  git config -f ' + local + ' user.name ' + psStr(g.name));
+      if (g.email) gitCfg.push('  git config -f ' + local + ' user.email ' + psStr(g.email));
+    });
+    var conf = sshConfig('windows', null).replace(/\n$/, '');
+    var confAssign = isAscii(conf) && conf.indexOf("'@") < 0
+      ? "$conf = @'\n" + conf + "\n'@"
+      : "$conf = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('" + b64u8(conf + '\n') + "'))";
+    if (isAscii(conf)) confAssign = confAssign.replace("\n'@", "\n\n'@");
+    var mBlocks = ordered().map(function (m) {
+      var os = m.os === 'windows' ? 'windows' : 'linux';
+      var a = psStr(m.alias);
+      var L = ["Write-Host ''; Write-Host " + psStr('[' + m.alias + '] ' + os + ' ' + (m.host || '') + (m.jump ? ' (via ' + m.jump + ')' : ''))];
+      if (m.fwd) {
+        L.push('if (Install-Key ' + a + " '" + os + "') { Push-Remote " + a + " '" + os + "' '" + b64u8(sshConfig(os === 'windows' ? 'windows' : 'unix', m.alias)) + "' " + gitPubs + ' }');
+      } else {
+        L.push('[void](Install-Key ' + a + " '" + os + "')   # agent forwarding off: install key only");
+      }
+      return L.join('\n');
+    }).join('\n\n');
+    var pubPrint = gs.length ? ["Write-Host ''", "Write-Host 'Add these public keys to your Git hosting (account SSH keys or repo Deploy keys), then test with ssh -T:'"]
+      .concat(gs.map(function (g) { return 'Write-Host ' + psStr('--- ' + g.alias + '  (test: ssh -T ' + g.alias + ')') + ' -ForegroundColor Yellow; Get-Content (Join-Path $SshDir ' + psq(g.key + '.pub') + ')'; })).join('\n') : '';
+    return fill(tpl('tpl-init-ps1'), {
+      DATE: today(), KEY: state.key, COMMENT: psStr(state.comment || 'fleet-key'),
+      GITKEYS: gitKeys, GITKEY_PATHS: gitKeyPaths, GITCFG: gitCfg.join('\n'),
+      LOCAL_CONF: confAssign,
+      MACHINES: mBlocks || "Write-Host 'No machines yet'",
+      ALIASES: machines().map(function (m) { return psStr(m.alias); }).join(', '),
+      PUBPRINT: pubPrint
+    });
+  }
+
+  function genRemote() {
+    var ms = machines().filter(function (m) { return m.fwd; });
+    if (!ms.length) return '# 没有开启「转发 Agent」的机器，不需要远端配置。\n# 想在某台服务器上继续 ssh 到别的机器或执行 git，请在左侧勾选它的「转发 Agent」。\n';
+    return '# 初始化脚本会自动把这些内容写到对应机器的 ~/.ssh/fleet.conf，这里只供查看。\n'
+      + '# 远端只放公钥（.pub），私钥一直留在你本机，通过 Agent 转发使用。\n\n'
+      + ms.map(function (m) {
+        var p = m.os === 'windows' ? '%USERPROFILE%\\.ssh\\fleet.conf' : '~/.ssh/fleet.conf';
+        return '# ================= ' + m.alias + '  →  ' + p + ' =================\n' + sshConfig(m.os === 'windows' ? 'windows' : 'unix', m.alias);
+      }).join('\n');
+  }
+
+  function genCsv() {
+    return 'alias,os,repos\n' + machines().map(function (m) {
+      return [m.alias, m.os === 'windows' ? 'windows' : 'linux', (m.repos || '').replace(/,/g, '')].join(',');
+    }).join('\n') + '\n';
+  }
+
+  function genGit() {
+    var gs = gits(), L = [];
+    var g0 = gs[0] ? gs[0].alias : 'github-work';
+    L.push('# ===== 用 Host 别名区分账号 =====');
+    L.push('# 克隆新仓库');
+    L.push('git clone git@' + g0 + ':<组织>/<仓库>.git');
+    L.push('# 已有仓库改成别名地址（在仓库目录里执行）');
+    L.push('git remote set-url origin git@' + g0 + ':<组织>/<仓库>.git');
+    L.push('# 测试账号是否认得出来');
+    gs.forEach(function (g) { L.push('ssh -T ' + g.alias); });
+    L.push('');
+    L.push('# ===== ~/.gitconfig（Linux / macOS） =====');
+    gs.forEach(function (g) { var d = gitDir(g.dir); if (d) { L.push('[includeIf "gitdir:' + d + '"]'); L.push('    path = ~/.gitconfig-' + g.alias); } });
+    L.push('');
+    L.push('# ===== %USERPROFILE%\\.gitconfig（Windows，gitdir/i 不区分大小写） =====');
+    L.push('[core]');
+    L.push('    sshCommand = C:/Windows/System32/OpenSSH/ssh.exe');
+    L.push('    longpaths = true');
+    gs.forEach(function (g) { var d = gitDir(g.dir); if (d) { L.push('[includeIf "gitdir/i:' + d + '"]'); L.push('    path = ~/.gitconfig-' + g.alias); } });
+    gs.forEach(function (g) {
+      L.push('');
+      L.push('# ===== ~/.gitconfig-' + g.alias + ' =====');
+      L.push('[user]');
+      L.push('    name = ' + (g.name || '<名字>'));
+      L.push('    email = ' + (g.email || '<邮箱>'));
+    });
+    L.push('');
+    L.push('# ===== 换行符：在每个仓库根目录放一个 .gitattributes =====');
+    L.push('* text=auto eol=lf');
+    L.push('*.ps1 text eol=crlf');
+    L.push('*.bat text eol=crlf');
+    L.push('*.cmd text eol=crlf');
+    L.push('*.png binary');
+    L.push('*.jpg binary');
+    L.push('# 已有仓库加完 .gitattributes 后执行一次：');
+    L.push('git add --renormalize . && git commit -m "Normalize line endings"');
+    L.push('');
+    L.push('# ===== 服务器上的定时任务（cron / 计划任务）=====');
+    L.push('# 定时任务运行时你没有登录，拿不到转发的 Agent。给这台服务器单独生成一把只读 Deploy Key：');
+    L.push("ssh-keygen -t ed25519 -f ~/.ssh/deploy_<仓库名> -N '' -C deploy@<主机名>");
+    L.push('# 把 .pub 加到仓库的 Deploy keys（只读），然后在该仓库里：');
+    L.push('git config core.sshCommand "ssh -i ~/.ssh/deploy_<仓库名> -o IdentitiesOnly=yes"');
+    return L.join('\n') + '\n';
+  }
+
+  function genSwitch() {
+    var as = machines().map(function (m) { return m.alias; });
+    var gs = gits();
+    var keys = [state.key].concat(gs.map(function (g) { return g.key; })).join(' ');
+    var L = [];
+    L.push('# ===== Linux / macOS：加到 ~/.bashrc 或 ~/.zshrc =====');
+    L.push('FLEET_HOSTS=(' + as.join(' ') + ')');
+    L.push('s() {   # 输入 s，选一台直接登录');
+    L.push('  local h');
+    L.push('  if command -v fzf >/dev/null; then');
+    L.push("    h=$(printf '%s\\n' \"${FLEET_HOSTS[@]}\" | fzf --height 40% --prompt='ssh> ') || return");
+    L.push('  else');
+    L.push('    select h in "${FLEET_HOSTS[@]}"; do break; done');
+    L.push('  fi');
+    L.push('  [ -n "$h" ] && ssh "$h"');
+    L.push('}');
+    L.push('');
+    L.push('# Linux：开机后第一次开终端输一次口令，之后所有终端共用同一个 agent');
+    L.push('# 先安装：sudo apt install keychain   或   sudo dnf install keychain');
+    L.push('eval "$(keychain --eval --quiet ' + keys + ')"');
+    L.push('');
+    L.push('# macOS：口令存进钥匙串，重启后自动可用（初始化脚本已用 --apple-use-keychain 加载）');
+    L.push('# 在 ~/.ssh/config 末尾加：');
+    L.push('#   Host *');
+    L.push('#     UseKeychain yes');
+    L.push('');
+    L.push('# ===== Windows PowerShell：notepad $PROFILE 打开后粘贴 =====');
+    L.push('$FleetHosts = @(' + as.map(psq).join(', ') + ')');
+    L.push('function s {');
+    L.push('  for ($i = 0; $i -lt $FleetHosts.Count; $i++) { Write-Host (\'[{0}] {1}\' -f ($i + 1), $FleetHosts[$i]) }');
+    L.push("  $n = Read-Host 'ssh to'");
+    L.push("  if ($n -match '^\\d+$' -and [int]$n -ge 1 -and [int]$n -le $FleetHosts.Count) { ssh $FleetHosts[[int]$n - 1] }");
+    L.push('}');
+    L.push('');
+    L.push('# ===== Windows Terminal：设置 → 打开 JSON 文件，加到 "profiles" → "list" 里 =====');
+    L.push(as.map(function (a) { return '{ "name": "' + a + '", "commandline": "ssh ' + a + '", "hidden": false }'; }).join(',\n'));
+    return L.join('\n') + '\n';
+  }
+
+  function stepsHtml() {
+    var ms = machines();
+    var wins = ms.filter(function (m) { return m.os === 'windows'; }).map(function (m) { return m.alias; });
+    var pw = ms.filter(function (m) { return m.auth === 'password'; }).map(function (m) { return m.alias; });
+    var fwd = ms.filter(function (m) { return m.fwd; });
+    var withRepo = ms.filter(function (m) { return (m.repos || '').trim(); });
+    var a0 = ms[0] ? ms[0].alias : 'web1';
+    var hop = fwd[0] && ms.find(function (m) { return m.alias !== fwd[0].alias; });
+    var code = function (s) { return '<code>' + esc(s) + '</code>'; };
+    var H = [];
+    H.push('<p>浏览器没法直接连接服务器，所以这里只生成配置和脚本，需要你在自己的电脑上运行。下面的初始配置每台发起连接的电脑做一次就行。</p>');
+    H.push('<ol class="steps">');
+    if (wins.length) H.push('<li><h3>先给 Windows 服务器开 SSH</h3><p>在 ' + wins.map(code).join('、') + ' 上用管理员 PowerShell 运行「Windows 服务器」页的脚本。</p></li>');
+    H.push('<li><h3>在本机运行初始化脚本</h3><p>Linux / macOS / WSL：保存「fleet-init.sh」后运行 ' + code('bash fleet-init.sh') + '。</p><p>Windows：保存「fleet-init.ps1」后，在管理员 PowerShell 里运行 ' + code('powershell -ExecutionPolicy Bypass -File .\\fleet-init.ps1') + '。</p><p>要从哪台电脑发起连接，就在哪台运行一次。每台机器第一次连接时核对指纹并输入 yes' + (pw.length ? '；' + pw.map(code).join('、') + ' 只能用密码登录，各输一次密码' : '') + '。</p></li>');
+    H.push('<li><h3>把 Git 公钥加到托管平台</h3><p>脚本最后会打印每个 Git 账号的公钥。加到账号的 SSH Keys 或仓库的 Deploy Keys，再用 ' + code('ssh -T ' + (gits()[0] ? gits()[0].alias : 'github-work')) + ' 测试。已有仓库用「Git 身份」页的 ' + code('git remote set-url') + ' 改成别名地址。</p></li>');
+    H.push('<li><h3>放好批量脚本</h3><p>把「hosts.csv」和「multi-git.sh」或「multi-git.ps1」放在同一个文件夹。Linux / macOS 上先执行一次 ' + code('chmod +x multi-git.sh') + '。</p></li>');
+    H.push('<li><h3>让 agent 常驻</h3><p>Windows 的 ssh-agent 服务已设为自动启动。Linux 按「快速切换」页加上 keychain；macOS 用钥匙串。这样开机后只需输一次密钥口令。</p></li>');
+    H.push('<li><h3>（可选）关闭密码登录</h3><p>自检全部显示 OK 后，可以在服务器上把 ' + code('PasswordAuthentication') + ' 改成 ' + code('no') + '。改之前保持一个已登录的窗口，确认新连接能登录后再关掉它。</p></li>');
+    H.push('</ol>');
+    H.push('<h3 class="sec">配置完成后的日常</h3>');
+    var daily = ['ssh ' + a0 + '                       # 直接登录，不用输密码'];
+    if (hop) daily.push('ssh ' + fwd[0].alias + '  然后  ssh ' + hop.alias + '      # 从服务器继续跳到其他机器');
+    if (fwd[0]) daily.push('ssh ' + fwd[0].alias + '  然后  git pull         # 在服务器上用你本机的密钥 pull / push');
+    if (withRepo.length) {
+      daily.push('./multi-git.sh pull               # 所有机器、所有仓库一起 pull');
+      daily.push('./multi-git.sh status -o ' + withRepo.slice(0, 2).map(function (m) { return m.alias; }).join(',') + '   # 只看指定机器');
+      daily.push('.\\multi-git.ps1 push -DryRun      # Windows 上先预览再执行');
+    }
+    daily.push('s                                 # 菜单选择要登录的机器（见「快速切换」页）');
+    H.push('<pre class="mini">' + esc(daily.join('\n')) + '</pre>');
+    H.push('<h3 class="sec">仍需手动处理的情况</h3><ul>');
+    H.push('<li>私钥设了口令：每次开机后要输一次口令。</li>');
+    H.push('<li>没勾选「转发 Agent」的机器' + (ms.filter(function (m) { return !m.fwd; }).length ? '（' + ms.filter(function (m) { return !m.fwd; }).map(function (m) { return code(m.alias); }).join('、') + '）' : '') + '：登录上去以后不能再 ssh 到别的机器，也不能用你的密钥执行 git。</li>');
+    H.push('<li>服务器上的定时任务：运行时你没有登录，拿不到 Agent，需要单独配置 Deploy Key（见「Git 身份」页末尾）。</li>');
+    H.push('<li>新增机器：在左侧添加后重新复制并运行初始化脚本，已完成的部分会自动跳过。</li>');
+    if (wins.length) H.push('<li>Windows 服务器作为中转时，OpenSSH 的 Agent 转发支持不稳定。如果在 ' + wins.map(code).join('、') + ' 上执行 git 失败，请给它单独配置 Deploy Key。</li>');
+    H.push('</ul>');
+    return H.join('');
+  }
+
+  function troubleHtml() {
+    var rows = [
+      ['Permission denied (publickey)', '公钥没装上，或者用错了密钥', '运行 <code>ssh -v 别名</code> 看 Offering public key 那几行。Linux 服务器检查 <code>chmod 700 ~/.ssh; chmod 600 ~/.ssh/authorized_keys</code>，然后重新运行初始化脚本。'],
+      ['UNPROTECTED PRIVATE KEY FILE', 'Windows 上私钥文件的权限太宽', '<code>icacls 私钥路径 /inheritance:r /grant:r "%USERNAME%:F"</code>'],
+      ['Git 每次都要输口令', 'Git for Windows 自带的 ssh 不读 Windows 的 ssh-agent', '<code>git config --global core.sshCommand C:/Windows/System32/OpenSSH/ssh.exe</code>'],
+      ['Windows 服务器管理员账号密钥不生效', '管理员的公钥必须放在 administrators_authorized_keys，并且只允许 Administrators 和 SYSTEM 访问', '公钥放进 <code>C:\\ProgramData\\ssh\\administrators_authorized_keys</code>，再运行 <code>icacls 该文件 /inheritance:r /grant "*S-1-5-32-544:F" /grant "*S-1-5-18:F"</code>'],
+      ['服务器上 git push 用错账号或被拒绝', '没有转发 Agent，或远端缺少对应的 .pub 文件', '在服务器上运行 <code>ssh-add -l</code>，应能看到你的密钥。看不到就检查是否勾选了「转发 Agent」。然后用 <code>ssh -T 账号别名</code> 测试。'],
+      ['Host key verification failed / REMOTE HOST IDENTIFICATION HAS CHANGED', '服务器重装了，或者 IP 被别的机器占用', '先确认原因，再运行 <code>ssh-keygen -R 别名或IP</code>，重新连接并核对指纹。不要关闭 StrictHostKeyChecking。'],
+      ['整个文件都显示被修改', '换行符 CRLF 和 LF 混用', '加上 .gitattributes，再运行 <code>git add --renormalize .</code>'],
+      ['Filename too long', 'Windows 路径长度限制', '<code>git config --global core.longpaths true</code>'],
+      ['multi-git 显示 FAIL，单独 ssh 却正常', '重启后 agent 里没有密钥，批量模式不会弹出口令输入', '先运行 <code>ssh-add -l</code>；没有密钥就运行一次 <code>ssh-add</code>，或者配置 keychain。'],
+      ['ssh 卡住不动（Linux / macOS）', '复用的旧连接已经失效', '<code>ssh -O exit 别名</code>，或删掉 <code>~/.ssh/cm-*</code>']
+    ];
+    return '<div class="tbl"><table><thead><tr><th>报错 / 现象</th><th>原因</th><th>解决</th></tr></thead><tbody>'
+      + rows.map(function (r) { return '<tr><td>' + esc(r[0]) + '</td><td>' + r[1] + '</td><td>' + r[2] + '</td></tr>'; }).join('')
+      + '</tbody></table></div>';
+  }
+
+  var TABS = [
+    { id: 'steps', label: '上手步骤', html: stepsHtml, name: '上手步骤', hint: '按顺序做一遍' },
+    { id: 'init-sh', label: 'fleet-init.sh', file: true, gen: genInitSh, name: 'fleet-init.sh', hint: '在 Linux / macOS / WSL 本机保存并运行一次：bash fleet-init.sh' },
+    { id: 'init-ps1', label: 'fleet-init.ps1', file: true, gen: genInitPs, name: 'fleet-init.ps1', hint: '在 Windows 本机保存，第一次用管理员 PowerShell 运行' },
+    { id: 'conf-unix', label: 'SSH 配置 · Linux/mac', gen: function () { return sshConfig('unix', null); }, name: '~/.ssh/fleet.conf', hint: '初始化脚本会自动写入，这里供查看；手动放置时在 ~/.ssh/config 第一行加 Include ~/.ssh/fleet.conf' },
+    { id: 'conf-win', label: 'SSH 配置 · Windows', gen: function () { return sshConfig('windows', null); }, name: '%USERPROFILE%\\.ssh\\fleet.conf', hint: 'Windows 自带的 OpenSSH 不支持连接复用，所以没有 ControlMaster' },
+    { id: 'remote', label: '远端配置', gen: genRemote, name: '各服务器的 ~/.ssh/fleet.conf', hint: '让服务器之间可以互相访问，初始化脚本会自动下发' },
+    { id: 'multi-sh', label: 'multi-git.sh', file: true, gen: function () { return fill(tpl('tpl-multi-sh'), { DATE: today() }); }, name: 'multi-git.sh', hint: '和 hosts.csv 放在同一目录：./multi-git.sh pull' },
+    { id: 'multi-ps1', label: 'multi-git.ps1', file: true, gen: function () { return fill(tpl('tpl-multi-ps1'), { DATE: today() }); }, name: 'multi-git.ps1', hint: '和 hosts.csv 放在同一目录：.\\multi-git.ps1 pull' },
+    { id: 'csv', label: 'hosts.csv', file: true, gen: genCsv, name: 'hosts.csv', hint: '批量脚本读取的清单，左侧修改后会自动更新' },
+    { id: 'git', label: 'Git 身份', gen: genGit, name: 'Git 多账号与换行符', hint: '初始化脚本已自动设置，这里是对应的配置内容和常用命令' },
+    { id: 'winsrv', label: 'Windows 服务器', file: true, gen: function () { return fill(tpl('tpl-winsrv'), { DATE: today() }); }, name: 'win-sshd-setup.ps1', hint: '在每台 Windows 服务器上用管理员 PowerShell 运行一次' },
+    { id: 'switch', label: '快速切换', gen: genSwitch, name: '快速切换与 agent 常驻', hint: '加到 shell 配置或 PowerShell 配置文件里' },
+    { id: 'trouble', label: '排错', html: troubleHtml, name: '常见报错', hint: '出问题时先看这里' }
+  ];
+  var current = 'steps';
+  try { var saved = localStorage.getItem(TAB_STORE); if (saved && TABS.some(function (t) { return t.id === saved; })) current = saved; } catch (e) { /* ignore */ }
+
+  /* ---------- editor rendering ---------- */
+  function field(id, label, value, opts) {
+    opts = opts || {};
+    return '<label class="field' + (opts.wide ? ' wide' : '') + '" for="' + id + '"><span>' + label + '</span>'
+      + '<input type="text" id="' + id + '" data-k="' + opts.k + '" value="' + esc(value) + '"' + (opts.ph ? ' placeholder="' + esc(opts.ph) + '"' : '') + (opts.num ? ' inputmode="numeric"' : '') + ' spellcheck="false"></label>';
+  }
+  function select(id, label, value, k, options) {
+    return '<label class="field" for="' + id + '"><span>' + label + '</span><select id="' + id + '" data-k="' + k + '">'
+      + options.map(function (o) { return '<option value="' + esc(o[0]) + '"' + (o[0] === value ? ' selected' : '') + '>' + esc(o[1]) + '</option>'; }).join('')
+      + '</select></label>';
+  }
+
+  function renderMachines() {
+    var aliases = state.machines.map(function (m) { return m.alias; }).filter(Boolean);
+    $('#machines').innerHTML = state.machines.map(function (m, i) {
+      var p = 'm' + i + '-';
+      var jumpOpts = [['', '直连']].concat(aliases.filter(function (a) { return a !== m.alias; }).map(function (a) { return [a, a]; }));
+      if (m.jump && aliases.indexOf(m.jump) < 0) jumpOpts.push([m.jump, m.jump + '（不存在）']);
+      return '<div class="card" data-i="' + i + '">'
+        + '<div class="card-top"><input type="text" class="alias-in" id="' + p + 'alias" data-k="alias" value="' + esc(m.alias) + '" placeholder="别名" aria-label="别名" spellcheck="false">'
+        + '<span class="route">' + esc(route(m)) + '</span>'
+        + '<button type="button" class="ghost" data-del="' + i + '">删除</button></div>'
+        + '<div class="fields">'
+        + select(p + 'os', '系统', m.os, 'os', [['linux', 'Linux / macOS'], ['windows', 'Windows']])
+        + field(p + 'host', '地址', m.host, { k: 'host', ph: 'IP 或域名' })
+        + field(p + 'port', '端口', m.port, { k: 'port', ph: '22', num: true })
+        + field(p + 'user', '用户', m.user, { k: 'user' })
+        + select(p + 'auth', '现在怎么登录', m.auth, 'auth', [['key', '已能用密钥'], ['password', '只能用密码']])
+        + select(p + 'jump', '经由跳板机', m.jump || '', 'jump', jumpOpts)
+        + field(p + 'repos', '仓库路径（多个用 ; 分隔）', m.repos, { k: 'repos', wide: true, ph: m.os === 'windows' ? 'D:\\code\\app' : '/srv/app;/opt/api' })
+        + '<label class="check wide" for="' + p + 'fwd"><input type="checkbox" id="' + p + 'fwd" data-k="fwd"' + (m.fwd ? ' checked' : '') + '><span>转发 Agent：登录这台后，还能继续 ssh 到其他机器、执行 git pull / push</span></label>'
+        + '</div></div>';
+    }).join('') || '<p class="lede">还没有机器，点「添加机器」。</p>';
+  }
+
+  function renderGits() {
+    $('#gits').innerHTML = state.git.map(function (g, i) {
+      var p = 'g' + i + '-';
+      return '<div class="card" data-i="' + i + '">'
+        + '<div class="card-top"><input type="text" class="alias-in" id="' + p + 'alias" data-k="alias" value="' + esc(g.alias) + '" placeholder="别名" aria-label="账号别名" spellcheck="false">'
+        + '<span class="route">git@' + esc(g.alias || '别名') + ':&lt;组织&gt;/&lt;仓库&gt;.git</span>'
+        + '<button type="button" class="ghost" data-del="' + i + '">删除</button></div>'
+        + '<div class="fields">'
+        + field(p + 'host', '平台域名', g.host, { k: 'host', ph: 'github.com' })
+        + field(p + 'key', '密钥文件名', g.key, { k: 'key', ph: 'id_ed25519_work' })
+        + field(p + 'name', '提交用的名字', g.name, { k: 'name' })
+        + field(p + 'email', '提交用的邮箱', g.email, { k: 'email' })
+        + field(p + 'dir', '这个目录下的仓库自动用这个身份', g.dir, { k: 'dir', wide: true, ph: '~/work/' })
+        + '</div></div>';
+    }).join('') || '<p class="lede">没有 Git 账号也可以，只是不会生成 Git 相关配置。</p>';
+  }
+
+  function warnings() {
+    var W = [], seen = {}, ms = state.machines;
+    ms.forEach(function (m) {
+      if (!m.alias) { W.push(['缺少别名', '有一台机器没有填别名，生成时会跳过它。']); return; }
+      if (/\s/.test(m.alias)) W.push(['别名有空格', m.alias + '：别名里不能有空格。']);
+      if (seen[m.alias]) W.push(['别名重复', m.alias + ' 出现了不止一次。']);
+      seen[m.alias] = 1;
+      if (!m.host) W.push(['缺少地址', m.alias + ' 还没有填地址。']);
+      if (m.jump === m.alias) W.push(['跳板设置错误', m.alias + ' 不能把自己设为跳板机。']);
+      else if (m.jump && !byAlias(m.jump)) W.push(['跳板不存在', m.alias + ' 的跳板机 ' + m.jump + ' 不在列表里。']);
+      if (route(m).indexOf('(循环)') >= 0) W.push(['跳板循环', m.alias + ' 的跳板设置形成了循环。']);
+      if (m.os === 'windows' && m.fwd) W.push(['注意', m.alias + ' 是 Windows：OpenSSH 的 Agent 转发支持不稳定，在它上面执行 git 可能需要单独配置 Deploy Key。']);
+      var jm = m.jump && byAlias(m.jump);
+      if (jm && jm.os === 'windows') W.push(['注意', m.alias + ' 经由 Windows 机器 ' + jm.alias + ' 跳转，需要它的 sshd 允许端口转发（默认允许）。']);
+    });
+    state.git.forEach(function (g) {
+      if (g.alias && !g.key) W.push(['缺少密钥文件名', 'Git 账号 ' + g.alias + ' 没有填密钥文件名，会被跳过。']);
+      if (g.alias && seen[g.alias]) W.push(['别名重复', g.alias + ' 和某台机器的别名相同。']);
+    });
+    if (!/^[A-Za-z0-9._-]+$/.test(state.key || '')) W.push(['密钥文件名', '服务器登录密钥的文件名只能包含字母、数字、点、下划线和连字符。']);
+    $('#warnings').innerHTML = W.map(function (w) { return '<div class="warn"><b>' + esc(w[0]) + '</b>' + esc(w[1]) + '</div>'; }).join('');
+  }
+
+  /* ---------- output ---------- */
+  function renderTabs() {
+    $('#tabs').innerHTML = TABS.map(function (t) {
+      return '<button type="button" role="tab" class="' + (t.file ? 'file' : '') + '" data-tab="' + t.id + '" aria-selected="' + (t.id === current) + '">' + esc(t.label) + '</button>';
+    }).join('');
+  }
+  var lastText = '';
+  function renderOutput() {
+    var t = TABS.find(function (x) { return x.id === current; });
+    $('#outName').textContent = t.name;
+    $('#outHint').textContent = t.hint;
+    $('#copyMsg').textContent = '';
+    if (t.html) {
+      $('#outBody').innerHTML = '<div class="doc">' + t.html() + '</div>';
+      $('#copyBtn').hidden = true;
+      lastText = '';
+    } else {
+      lastText = t.gen();
+      $('#outBody').innerHTML = '<pre class="code" id="codeOut" tabindex="0"></pre>';
+      $('#codeOut').textContent = lastText;
+      $('#copyBtn').hidden = false;
+    }
+  }
+  var timer = 0;
+  function changed(rerender) {
+    save();
+    if (rerender) { renderMachines(); }
+    warnings();
+    clearTimeout(timer);
+    timer = setTimeout(renderOutput, 120);
+  }
+
+  /* ---------- events ---------- */
+  $('#machines').addEventListener('input', function (e) {
+    var t = e.target, k = t.dataset.k; if (!k) return;
+    var i = +t.closest('.card').dataset.i;
+    var v = t.type === 'checkbox' ? t.checked : t.value;
+    if (k === 'port') v = String(v).replace(/\D/g, '');
+    if (k === 'alias') v = String(v).trim();
+    state.machines[i][k] = v;
+    changed(false);
+  });
+  $('#machines').addEventListener('change', function (e) {
+    var t = e.target, k = t.dataset.k; if (!k) return;
+    if (k === 'alias') {
+      var old = t.defaultValue.trim(), nu = t.value.trim();
+      if (old && old !== nu) state.machines.forEach(function (m) { if (m.jump === old) m.jump = nu; });
+    }
+    if (k === 'alias' || k === 'jump' || k === 'os') changed(true);
+  });
+  $('#machines').addEventListener('click', function (e) {
+    var b = e.target.closest('[data-del]'); if (!b) return;
+    var gone = state.machines[+b.dataset.del].alias;
+    state.machines.splice(+b.dataset.del, 1);
+    state.machines.forEach(function (m) { if (m.jump === gone) m.jump = ''; });
+    changed(true);
+  });
+  $('#addMachine').addEventListener('click', function () {
+    var n = state.machines.length + 1, a = 'server' + n;
+    while (byAlias(a)) { n++; a = 'server' + n; }
+    state.machines.push({ alias: a, os: 'linux', host: '', port: '22', user: 'root', auth: 'password', jump: '', fwd: false, repos: '' });
+    changed(true);
+    var el = document.getElementById('m' + (state.machines.length - 1) + '-host'); if (el) el.focus();
+  });
+
+  $('#gits').addEventListener('input', function (e) {
+    var t = e.target, k = t.dataset.k; if (!k) return;
+    var i = +t.closest('.card').dataset.i;
+    state.git[i][k] = k === 'alias' || k === 'key' ? t.value.trim() : t.value;
+    if (k === 'alias') { var r = t.closest('.card').querySelector('.route'); if (r) r.textContent = 'git@' + (t.value.trim() || '别名') + ':<组织>/<仓库>.git'; }
+    changed(false);
+  });
+  $('#gits').addEventListener('click', function (e) {
+    var b = e.target.closest('[data-del]'); if (!b) return;
+    state.git.splice(+b.dataset.del, 1);
+    renderGits(); changed(false);
+  });
+  $('#addGit').addEventListener('click', function () {
+    var n = state.git.length + 1;
+    state.git.push({ alias: 'git-account' + n, host: 'github.com', key: 'id_ed25519_git' + n, name: '', email: '', dir: '' });
+    renderGits(); changed(false);
+  });
+
+  $('#keyName').addEventListener('input', function (e) { state.key = e.target.value.trim(); changed(false); });
+  $('#keyComment').addEventListener('input', function (e) { state.comment = e.target.value; changed(false); });
+
+  $('#tabs').addEventListener('click', function (e) {
+    var b = e.target.closest('[data-tab]'); if (!b) return;
+    current = b.dataset.tab;
+    try { localStorage.setItem(TAB_STORE, current); } catch (err) { /* ignore */ }
+    renderTabs(); renderOutput();
+  });
+
+  $('#copyBtn').addEventListener('click', function () {
+    var msg = $('#copyMsg');
+    var fallback = function () {
+      var pre = document.getElementById('codeOut'); if (!pre) return;
+      var r = document.createRange(); r.selectNodeContents(pre);
+      var s = window.getSelection(); s.removeAllRanges(); s.addRange(r);
+      msg.textContent = '已选中全部内容，按 Ctrl+C / ⌘C 复制';
+    };
+    try {
+      navigator.clipboard.writeText(lastText).then(function () { msg.textContent = '已复制'; }, fallback);
+    } catch (err) { fallback(); }
+  });
+
+  var backup = document.querySelector('details.backup');
+  backup.addEventListener('toggle', function () { if (backup.open) $('#backupText').value = JSON.stringify(state, null, 2); });
+  $('#applyBackup').addEventListener('click', function () {
+    try {
+      var s = JSON.parse($('#backupText').value);
+      if (!valid(s)) throw new Error('bad');
+      state = s; syncKeyFields(); renderGits(); changed(true);
+      $('#backupMsg').textContent = '已应用';
+    } catch (err) { $('#backupMsg').textContent = '内容格式不对，请粘贴从本页复制出来的完整内容'; }
+  });
+  $('#resetSample').addEventListener('click', function () {
+    state = clone(SAMPLE); syncKeyFields(); renderGits(); changed(true);
+    $('#backupText').value = JSON.stringify(state, null, 2);
+    $('#backupMsg').textContent = '已恢复示例数据';
+  });
+
+  function syncKeyFields() { $('#keyName').value = state.key || ''; $('#keyComment').value = state.comment || ''; }
+
+  syncKeyFields();
+  renderMachines();
+  renderGits();
+  warnings();
+  renderTabs();
+  renderOutput();
+})();
+</script>
+</body>
+</html>
