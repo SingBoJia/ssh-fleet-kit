@@ -1,5 +1,10 @@
 # fleet：多台服务器的 SSH 与 Git 管理工具
 
+[English](README.en.md) | 中文
+
+[![Release](https://img.shields.io/github/v/release/SingBoJia/ssh-fleet-kit)](https://github.com/SingBoJia/ssh-fleet-kit/releases)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+
 在 Linux、macOS、Windows 之间来回登录服务器、在服务器之间交叉访问、批量 `git pull` / `git push`，用一个配置文件和一个命令搞定。
 
 - 一份 `fleet.ini` 写清所有机器和 Git 账号
