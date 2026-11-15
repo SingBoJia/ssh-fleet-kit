@@ -35,7 +35,8 @@ Windows 10 1809 及以上自带 OpenSSH 客户端；没有的话在「设置 →
 
 ```bash
 mkdir -p ~/.fleet && cd ~/.fleet
-fleet init                # 生成示例配置 fleet.ini
+fleet init                # 扫描 ~/.ssh/config 和 ~/.gitconfig 生成 fleet.ini（没有数据时给示例）
+fleet init --example      # 强制生成示例配置
 # 用编辑器把 fleet.ini 改成你的机器
 fleet setup --dry-run     # 先看看会做什么
 fleet setup               # 正式执行（Windows 第一次请用「以管理员身份运行」的终端）
@@ -86,7 +87,7 @@ dir = ~/work/               # 这个目录下的仓库自动使用这个身份
 
 | 命令 | 作用 |
 | --- | --- |
-| `fleet init [路径]` | 生成示例配置 |
+| `fleet init [路径] [--example]` | 扫描家目录生成配置；`--example` 生成示例 |
 | `fleet ls` | 列出机器、访问路线和 Git 账号 |
 | `fleet setup [-n] [-o 机器]` | 一次性初始化，`-n` 只显示计划 |
 | `fleet check [-o 机器]` | 检查免密登录和 Git 账号 |
@@ -95,10 +96,37 @@ dir = ~/work/               # 这个目录下的仓库自动使用这个身份
 | `fleet git pull -o web1,app1` | 只处理指定机器 |
 | `fleet git -- log -1 --oneline` | `--` 后面写任意 git 参数 |
 | `fleet run -- df -h` | 在所有机器上执行命令（Windows 机器上按 PowerShell 执行） |
+| `fleet run -o us01 -- df -h` | 只在一台机器上执行命令 |
 | `fleet config [--os windows] [--for 别名]` | 打印生成的 SSH 配置 |
 | `fleet hub show` / `fleet hub deploy` | 查看主服务器设置 / 把 fleet 部署到主服务器 |
 
 `git` 和 `run` 都支持 `-j` 并发数（默认 8）、`-t` 单个任务超时秒数（默认 300）、`-n` 只预览。`git pull` 默认使用 `--ff-only`，不会产生意外的合并提交。
+
+### 只对单台机器执行
+
+`-o` 只选一台机器，`--` 后面才是要执行的命令：
+
+```powershell
+# Linux 主机：按 Shell 解析
+fleet run -o us01 -- df -h
+fleet run -o jp -- "ps aux | grep nginx"
+
+# Windows 主机：按 PowerShell 解析
+fleet run -o win-srv -- "Get-Service | Where-Object Status -eq 'Running'"
+
+# 只登录一台
+fleet ssh us01
+
+# 只检查一台
+fleet check -o us01
+
+# 只对一台机器跑 git（需要该 host 配置了 repos）
+fleet git pull -o us01
+```
+
+- 多台机器用逗号：`fleet run -o us01,jp -- uptime`。
+- `fleet init` 自动扫描只能发现 SSH 主机，不能推断远端仓库路径；`repos` 需要手动补到对应的 `[host 别名]` 下。
+- 需要 cmd 语法时，在 Windows 主机上写 `fleet run -o win-srv -- cmd /c "dir"`。
 
 ## 交叉访问是怎么实现的
 
@@ -173,4 +201,8 @@ python3 -m unittest discover -s tests -v
 ```
 
 GitHub Actions 会在 Linux、macOS、Windows 上运行测试。
+
+## 许可证
+
+本项目采用 [MIT License](LICENSE) 开源，Copyright (c) 2026 SingBoJia。
 

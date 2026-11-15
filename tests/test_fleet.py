@@ -258,6 +258,62 @@ class WindowsEnvTests(unittest.TestCase):
             self.assertEqual(fleet.run_parallel([], 8, 10), 0)
 
 
+class ScanTests(unittest.TestCase):
+    def test_scan_ssh_hosts_skips_fleet_conf_and_wildcards(self):
+        with tempfile.TemporaryDirectory() as d:
+            home = Path(d)
+            ssh = home / ".ssh"
+            ssh.mkdir()
+            (ssh / "fleet.conf").write_text("Host fake1\n  HostName 10.0.0.99\n", encoding="utf-8")
+            (ssh / "config").write_text(
+                "Include fleet.conf\n"
+                "Host real1\n  HostName 192.0.2.10\n  User deploy\n  Port 2222\n  ForwardAgent yes\n"
+                "Host real2\n  HostName 192.0.2.11\n  ProxyJump real1\n"
+                "Host *.example\n  HostName 192.0.2.12\n",
+                encoding="utf-8",
+            )
+            (ssh / "id_ed25519").write_text("", encoding="utf-8")
+
+            scan = fleet.scan_home(home)
+            self.assertEqual([h.alias for h in scan.hosts], ["real1", "real2"])
+            self.assertEqual(scan.hosts[0].port, 2222)
+            self.assertTrue(scan.hosts[0].forward)
+            self.assertEqual(scan.hosts[1].jump, "real1")
+            self.assertEqual(scan.key, "id_ed25519")
+
+            text = fleet.render_scanned_config(scan)
+            parsed = fleet.parse_config(text)
+            self.assertEqual([h.alias for h in parsed.hosts], ["real1", "real2"])
+
+    def test_scan_git_accounts_skips_placeholders(self):
+        with tempfile.TemporaryDirectory() as d:
+            home = Path(d)
+            (home / ".gitconfig").write_text(
+                '[includeIf "gitdir/i:~/work/"]\n  path = ~/.gitconfig-github-work\n'
+                '[includeIf "gitdir/i:~/personal/"]\n  path = ~/.gitconfig-github-personal\n',
+                encoding="utf-8",
+            )
+            (home / ".gitconfig-github-work").write_text(
+                "[user]\n  name = Real Name\n  email = real@example.com\n", encoding="utf-8")
+            (home / ".gitconfig-github-personal").write_text(
+                "[user]\n  name = Your Name\n  email = you@example.com\n", encoding="utf-8")
+
+            accounts = fleet.scan_git_accounts(home, "id_ed25519")
+            self.assertEqual([g.alias for g in accounts], ["github-work"])
+            self.assertEqual(accounts[0].dir, "~/work/")
+            self.assertEqual(accounts[0].key, "id_ed25519")
+
+    def test_init_scan_uses_scanned_hosts(self):
+        with tempfile.TemporaryDirectory() as d:
+            p = Path(d) / "scan.ini"
+            scan = fleet.ScanResult(hosts=[fleet.Host("h1", "192.0.2.1")], key="id_ed25519")
+            with mock.patch.object(fleet, "scan_home", return_value=scan), redirect_stdout(io.StringIO()):
+                self.assertEqual(fleet.main(["init", str(p)]), 0)
+            text = p.read_text(encoding="utf-8")
+            self.assertIn("[host h1]", text)
+            self.assertNotIn("[host web1]", text)
+
+
 class CliTests(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
@@ -281,8 +337,8 @@ class CliTests(unittest.TestCase):
     def test_init(self):
         p = Path(self.tmp.name) / "new.ini"
         with redirect_stdout(io.StringIO()):
-            self.assertEqual(fleet.main(["init", str(p)]), 0)
-            self.assertEqual(fleet.main(["init", str(p)]), 2)
+            self.assertEqual(fleet.main(["init", str(p), "--example"]), 0)
+            self.assertEqual(fleet.main(["init", str(p), "--example"]), 2)
         self.assertEqual(p.read_text(encoding="utf-8"), fleet.EXAMPLE_INI)
 
     def test_git_dry_run_and_options_after_action(self):

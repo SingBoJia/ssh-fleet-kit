@@ -3,10 +3,10 @@
 """fleet: 多台服务器的 SSH 登录、交叉访问和批量 Git 操作工具。
 
 只依赖 Python 3.8+ 标准库和系统自带的 OpenSSH 客户端，Linux / macOS / Windows 通用。
-机器清单写在 fleet.ini 里（运行 `fleet init` 生成示例）。
+机器清单写在 fleet.ini 里（运行 `fleet init` 扫描家目录生成）。
 
 常用命令：
-  fleet init                 生成示例配置 fleet.ini
+  fleet init                 扫描 ~/.ssh/config 和 ~/.gitconfig 生成 fleet.ini
   fleet setup                一次性初始化：密钥、SSH 配置、Git 身份、分发公钥、下发远端配置
   fleet ssh [别名]           登录某台机器；不写别名时弹出选择菜单
   fleet git pull             所有机器、所有仓库并行 git pull（还有 push / status / fetch）
@@ -20,6 +20,7 @@ import argparse
 import base64
 import configparser
 import datetime
+import glob
 import os
 import re
 import shlex
@@ -120,6 +121,14 @@ class GitAccount:
     name: str = ""
     email: str = ""
     dir: str = ""
+
+
+@dataclass
+class ScanResult:
+    hosts: List[Host] = field(default_factory=list)
+    git: List[GitAccount] = field(default_factory=list)
+    keys: List[str] = field(default_factory=list)
+    key: str = "id_ed25519"
 
 
 @dataclass
@@ -291,6 +300,242 @@ def find_config(explicit: Optional[str]) -> Path:
 def load_config(explicit: Optional[str]) -> Fleet:
     p = find_config(explicit)
     return parse_config(p.read_text(encoding="utf-8-sig"), p)
+
+
+# --------------------------------------------------------------------------- 家目录扫描
+
+SCAN_SKIP_INCLUDES = {"fleet.conf"}
+PLACEHOLDER_GIT_NAMES = {"your name", "your_name"}
+PLACEHOLDER_GIT_EMAILS = {"you@company.com", "you@example.com", "your@email.com"}
+
+
+def _read_text(path: Path) -> str:
+    try:
+        return path.read_text(encoding="utf-8-sig")
+    except (OSError, UnicodeError):
+        return ""
+
+
+def _expand_include(value: str, base: Path) -> List[Path]:
+    raw = value.strip().strip('"')
+    if not raw:
+        return []
+    p = Path(raw).expanduser()
+    if not p.is_absolute():
+        p = base / p
+    return [Path(x) for x in sorted(glob.glob(str(p)))]
+
+
+def _ssh_config_files(path: Path, seen: Optional[set] = None) -> List[Path]:
+    """读取 SSH config 及其 Include；跳过 fleet 自己生成的 fleet.conf。"""
+    seen = seen or set()
+    try:
+        real = path.resolve()
+    except OSError:
+        real = path
+    if real in seen or not path.is_file() or path.name.lower() in SCAN_SKIP_INCLUDES:
+        return []
+    seen.add(real)
+    out = [path]
+    for raw in _read_text(path).splitlines():
+        line = raw.strip()
+        if not line or line.startswith("#"):
+            continue
+        parts = line.split(None, 1)
+        if len(parts) == 2 and parts[0].lower() == "include":
+            for inc in _expand_include(parts[1], path.parent):
+                out.extend(_ssh_config_files(inc, seen))
+    return out
+
+
+def _parse_ssh_file(path: Path) -> List[Dict[str, object]]:
+    blocks: List[Dict[str, object]] = []
+    cur: Optional[Dict[str, object]] = None
+    for raw in _read_text(path).splitlines():
+        line = raw.strip()
+        if not line or line.startswith("#"):
+            continue
+        if "=" in line:
+            key, value = line.split("=", 1)
+        else:
+            parts = line.split(None, 1)
+            if len(parts) < 2:
+                continue
+            key, value = parts[0], parts[1]
+        key, value = key.strip().lower(), value.strip()
+        if key == "host":
+            aliases = [a for a in value.split()
+                       if not a.startswith("!") and "*" not in a and "?" not in a]
+            cur = {"aliases": aliases, "hostname": "", "user": "", "port": 22,
+                   "jump": "", "forward": False}
+            blocks.append(cur)
+        elif cur is None:
+            continue
+        elif key == "hostname":
+            cur["hostname"] = value
+        elif key == "user":
+            cur["user"] = value
+        elif key == "port" and value.isdigit():
+            cur["port"] = int(value)
+        elif key == "proxyjump":
+            if value.lower() == "none":
+                cur["jump"] = "none"
+            else:
+                first = value.split(",", 1)[0].strip()
+                first = first.split("@")[-1].split(":", 1)[0]
+                cur["jump"] = first
+        elif key == "forwardagent":
+            cur["forward"] = value.lower() in ("yes", "true", "1")
+    return blocks
+
+
+def scan_ssh_hosts(config: Path) -> List[Host]:
+    """从 ~/.ssh/config 扫描真实 Host；通配 Host 和 fleet.conf 不导入。"""
+    blocks: List[Dict[str, object]] = []
+    for path in _ssh_config_files(config):
+        blocks.extend(_parse_ssh_file(path))
+    hosts: List[Host] = []
+    seen = set()
+    for block in blocks:
+        aliases = block["aliases"]
+        assert isinstance(aliases, list)
+        for alias in aliases:
+            if alias in seen:
+                continue
+            seen.add(alias)
+            hostname = str(block["hostname"] or alias).replace("%h", alias)
+            hosts.append(Host(
+                alias=alias, hostname=hostname, port=int(block["port"]),
+                user=str(block["user"]), os="linux",
+                jump=str(block["jump"]), forward=bool(block["forward"]),
+            ))
+    known = {h.alias for h in hosts}
+    for h in hosts:
+        if h.jump and h.jump != "none" and h.jump not in known:
+            h.jump = ""
+    return hosts
+
+
+def _git_identity(path: Path) -> Tuple[str, str]:
+    cp = configparser.ConfigParser(interpolation=None, strict=False)
+    try:
+        cp.read(path, encoding="utf-8-sig")
+    except configparser.Error:
+        return "", ""
+    if not cp.has_section("user"):
+        return "", ""
+    return cp.get("user", "name", fallback="").strip(), cp.get("user", "email", fallback="").strip()
+
+
+def scan_git_accounts(home: Path, default_key: str) -> List[GitAccount]:
+    """从 ~/.gitconfig 的 includeIf 导入非示例 Git 身份。"""
+    cfg = home / ".gitconfig"
+    if not cfg.is_file():
+        return []
+    cp = configparser.ConfigParser(interpolation=None, strict=False)
+    try:
+        cp.read(cfg, encoding="utf-8-sig")
+    except configparser.Error:
+        return []
+    accounts: List[GitAccount] = []
+    seen = set()
+    for section in cp.sections():
+        if not section.lower().startswith("includeif "):
+            continue
+        condition = section[len("includeIf "):].strip().strip('"')
+        m = re.match(r"gitdir/i?:(.+)$", condition, re.I)
+        if not m:
+            continue
+        git_dir = m.group(1).strip().strip('"')
+        inc_raw = cp.get(section, "path", fallback="").strip()
+        if not inc_raw:
+            continue
+        if inc_raw.startswith("~/"):
+            inc = home / inc_raw[2:]
+        else:
+            inc = Path(inc_raw).expanduser()
+            if not inc.is_absolute():
+                inc = home / inc
+        if not inc.is_file():
+            continue
+        name, email = _git_identity(inc)
+        if not name and not email:
+            continue
+        if name.lower() in PLACEHOLDER_GIT_NAMES or email.lower() in PLACEHOLDER_GIT_EMAILS:
+            continue
+        alias = inc.name
+        for prefix in (".gitconfig-", "gitconfig-"):
+            if alias.startswith(prefix):
+                alias = alias[len(prefix):]
+                break
+        alias = re.sub(r"[^A-Za-z0-9._-]+", "-", alias).strip("-") or "git"
+        if alias in seen:
+            continue
+        seen.add(alias)
+        host = "github.com"
+        if "gitee" in alias.lower():
+            host = "gitee.com"
+        elif "gitlab" in alias.lower():
+            host = "gitlab.com"
+        accounts.append(GitAccount(alias=alias, hostname=host, key=default_key,
+                                   name=name, email=email, dir=git_dir))
+    return accounts
+
+
+def scan_home(home: Optional[Path] = None) -> ScanResult:
+    """扫描家目录：~/.ssh/config 的主机 + ~/.gitconfig 的 Git 身份。"""
+    home = Path(home).expanduser() if home else Path.home()
+    ssh_dir = home / ".ssh"
+    result = ScanResult()
+    for candidate in ("id_ed25519", "id_rsa", "id_ecdsa"):
+        if (ssh_dir / candidate).is_file():
+            result.key = candidate
+            break
+    config = ssh_dir / "config"
+    if config.is_file():
+        result.hosts = scan_ssh_hosts(config)
+    result.git = scan_git_accounts(home, result.key)
+    return result
+
+
+def render_scanned_config(scan: ScanResult) -> str:
+    lines = [
+        "# fleet 配置：由 fleet init 扫描家目录生成",
+        "# 已跳过 ~/.ssh/fleet.conf 和 Your Name / you@example.com 之类的示例身份",
+        "# 请核对 hostname、user、repos 后再运行 fleet setup",
+        "",
+        "[settings]",
+        f"key = {scan.key}",
+        "comment = fleet-key",
+        "hub =",
+        "via_hub = no",
+        "",
+    ]
+    for h in scan.hosts:
+        lines.append(f"[host {h.alias}]")
+        lines.append(f"hostname = {h.hostname}")
+        if h.port != 22:
+            lines.append(f"port = {h.port}")
+        if h.user:
+            lines.append(f"user = {h.user}")
+        lines.append(f"os = {h.os}")
+        if h.jump:
+            lines.append(f"jump = {h.jump}")
+        if h.forward:
+            lines.append("forward = yes")
+        lines.append("")
+    for g in scan.git:
+        lines.append(f"[git {g.alias}]")
+        lines.append(f"hostname = {g.hostname}")
+        lines.append(f"key = {g.key}")
+        if g.name:
+            lines.append(f"name = {g.name}")
+        if g.email:
+            lines.append(f"email = {g.email}")
+        if g.dir:
+            lines.append(f"dir = {g.dir}")
+        lines.append("")
+    return "\n".join(lines).rstrip() + "\n"
 
 
 # --------------------------------------------------------------------------- SSH 配置生成
@@ -772,9 +1017,20 @@ def cmd_init(a: argparse.Namespace) -> int:
     if p.exists() and not a.force:
         raise FleetError(f"{p} 已经存在。要覆盖请加 --force")
     p.parent.mkdir(parents=True, exist_ok=True)
+    if getattr(a, "example", False):
+        text = EXAMPLE_INI
+        summary = "已生成示例配置"
+    else:
+        scan = scan_home()
+        if scan.hosts or scan.git:
+            text = render_scanned_config(scan)
+            summary = f"已扫描到 {len(scan.hosts)} 台主机、{len(scan.git)} 个 Git 账号"
+        else:
+            text = EXAMPLE_INI
+            summary = "没有扫描到可用主机，已生成示例配置"
     with open(p, "w", encoding="utf-8", newline="\n") as f:
-        f.write(EXAMPLE_INI)
-    print(f"已生成 {p}。用编辑器改成你自己的机器，然后运行：fleet setup")
+        f.write(text)
+    print(f"{summary}：{p}。核对后运行：fleet setup --dry-run")
     return 0
 
 
@@ -1031,14 +1287,20 @@ def cmd_hub(fl: Fleet, a: argparse.Namespace) -> int:
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(prog="fleet", description="多台服务器的 SSH 登录、交叉访问和批量 Git 操作。",
                                 formatter_class=argparse.RawDescriptionHelpFormatter,
-                                epilog="配置文件查找顺序：-c 参数 → 环境变量 FLEET_CONFIG → ./fleet.ini → ~/.fleet/fleet.ini")
+                                epilog="配置文件查找顺序：-c 参数 → 环境变量 FLEET_CONFIG → ./fleet.ini → ~/.fleet/fleet.ini\n\n"
+                                       "常用示例：\n"
+                                       "  fleet run -o us01 -- df -h      只在一台机器执行\n"
+                                       "  fleet run -o us01,jp -- uptime  在多台机器执行\n"
+                                       "  fleet ssh us01                  登录单台机器\n"
+                                       "  fleet git pull -o us01          只对单台机器跑 git")
     p.add_argument("-c", "--config", help="配置文件路径")
     p.add_argument("-V", "--version", action="version", version=f"fleet {__version__}")
     sub = p.add_subparsers(dest="cmd", metavar="命令")
 
-    s = sub.add_parser("init", help="生成示例配置 fleet.ini")
+    s = sub.add_parser("init", help="扫描家目录生成 fleet.ini（--example 用示例）")
     s.add_argument("path", nargs="?", default="fleet.ini")
     s.add_argument("--force", action="store_true", help="覆盖已有文件")
+    s.add_argument("--example", action="store_true", help="生成示例配置，不扫描家目录")
 
     sub.add_parser("ls", help="列出机器、访问路线和 Git 账号")
 
@@ -1067,6 +1329,14 @@ def build_parser() -> argparse.ArgumentParser:
             s.add_argument("args", nargs="*", help="pull / push / status / fetch，或 -- 加任意 git 参数")
         else:
             s.add_argument("command", nargs="*", help="要执行的命令，带参数时写在 -- 后面")
+        if name == "run":
+            s.formatter_class = argparse.RawDescriptionHelpFormatter
+            s.epilog = ("示例：\n"
+                        "  fleet run -o us01 -- df -h\n"
+                        "  fleet run -o us01,jp -- uptime\n"
+                        "  fleet run -o win-srv -- \"Get-Service | Where-Object Status -eq 'Running'\"\n\n"
+                        "说明：-o 后面只写一个别名就是单台；-- 后面才是命令。\n"
+                        "本机和远端 Windows 都按 PowerShell 解析，Linux 按 Shell 解析。")
 
     s = sub.add_parser("hub", help="主服务器：show 查看，deploy 把 fleet 部署上去")
     s.add_argument("action", choices=["show", "deploy"])
