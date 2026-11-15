@@ -25,7 +25,7 @@ fleet --version
 
 ```powershell
 git clone git@github.com:SingBoJia/ssh-fleet-kit.git $HOME\ssh-fleet-kit
-# 把这个目录加入 PATH 后，就能直接输入 fleet（通过 fleet.cmd 调用 python）
+# 把这个目录加入 PATH 后，就能直接输入 fleet（fleet.cmd 优先用 py -3，找不到时用 python）
 [Environment]::SetEnvironmentVariable('Path', $env:Path + ";$HOME\ssh-fleet-kit", 'User')
 ```
 
@@ -129,6 +129,7 @@ web1  ── ssh app1 ──▶ app1        ← 用的是转发过来的 agent
 ## 让 agent 常驻（开机只输一次口令）
 
 - **Windows**：`fleet setup` 已经把 ssh-agent 服务设为自动启动，并让 Git 改用系统自带的 OpenSSH。
+- `fleet.cmd` 会设置 `PYTHONUTF8=1`，避免中文输出在管道/重定向时变成 `?`；`fleet.py` 会按 `%WINDIR%\System32\OpenSSH\ssh.exe` 定位 OpenSSH，找不到时回退到 PATH 里的 `ssh`。本机 Windows 上的 `fleet run -- <命令>` 通过 PowerShell 执行（与远端 Windows 一致），请使用 PowerShell 语法；需要 cmd 语法时写 `fleet run -- cmd /c "..."`。
 - **macOS**：`fleet setup` 用 `--apple-use-keychain` 把口令存进钥匙串。在 `~/.ssh/config` 末尾加上 `Host *` 和 `  UseKeychain yes` 两行，重启后会自动加载。
 - **Linux**：安装 keychain（`apt install keychain` 或 `dnf install keychain`），在 `~/.bashrc` 里加：
 
@@ -172,3 +173,4 @@ python3 -m unittest discover -s tests -v
 ```
 
 GitHub Actions 会在 Linux、macOS、Windows 上运行测试。
+

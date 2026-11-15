@@ -6,6 +6,7 @@ import tempfile
 import unittest
 from contextlib import redirect_stdout
 from pathlib import Path
+from unittest import mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 import fleet  # noqa: E402
@@ -170,7 +171,10 @@ class CommandTests(unittest.TestCase):
     def test_git_windows(self):
         h = cfg().host("win")
         ps = self.decode_ps(fleet.git_remote_command(h, "D:\\it's", ["status", "-sb"]))
-        self.assertEqual(ps, "Set-Location -LiteralPath 'D:\\it''s'; git 'status' '-sb'; exit $LASTEXITCODE")
+        self.assertIn("Set-Location -LiteralPath 'D:\\it''s'", ps)
+        self.assertIn("git 'status' '-sb'", ps)
+        self.assertIn("$ErrorActionPreference = 'Stop'", ps)
+        self.assertIn("[Console]::OutputEncoding", ps)
 
     def test_add_key_linux_is_idempotent_command(self):
         cmd = fleet.add_key_command(cfg().host("web1"), "ssh-ed25519 AAAA me@pc")
@@ -195,6 +199,63 @@ class CommandTests(unittest.TestCase):
         self.assertEqual([h.alias for h in fl.select("win, web1")], ["web1", "win"])
         with self.assertRaises(fleet.FleetError):
             fl.select("nope")
+
+
+class WindowsEnvTests(unittest.TestCase):
+    def test_ps_encoded_args_round_trip(self):
+        args = fleet.ps_encoded_args("Write-Output '中文'")
+        self.assertEqual(args[:4], ["powershell", "-NoProfile", "-NonInteractive", "-EncodedCommand"])
+        self.assertEqual(base64.b64decode(args[4]).decode("utf-16-le"), "Write-Output '中文'")
+
+    def test_win_ssh_path_is_resolved(self):
+        if os.name == "nt":
+            self.assertTrue(Path(fleet.WIN_SSH.strip('"')).is_file())
+
+    def test_fleet_cmd_prefers_py_launcher(self):
+        text = (Path(__file__).resolve().parent.parent / "fleet.cmd").read_text(encoding="utf-8")
+        self.assertIn("PYTHONUTF8=1", text)
+        self.assertIn("py -3", text)
+
+    @unittest.skipUnless(os.name == "nt", "Windows only")
+    def test_force_utf8_stdio(self):
+        class FakeStream:
+            encoding = "cp1252"
+
+            def __init__(self):
+                self.kwargs = {}
+
+            def reconfigure(self, **kwargs):
+                self.kwargs = kwargs
+
+        out, err = FakeStream(), FakeStream()
+        with mock.patch.object(sys, "stdout", out), mock.patch.object(sys, "stderr", err):
+            fleet._force_utf8_stdio()
+        self.assertEqual(out.kwargs.get("encoding"), "utf-8")
+        self.assertEqual(err.kwargs.get("encoding"), "utf-8")
+
+    @unittest.skipUnless(os.name == "nt", "Windows only")
+    def test_local_run_success_and_failure(self):
+        with tempfile.TemporaryDirectory() as d:
+            ini = Path(d) / "fleet.ini"
+            ini.write_text(
+                "[settings]\nkey = test_key\nself = local\n\n[host local]\nhostname = 127.0.0.1\nuser = test\n",
+                encoding="utf-8",
+            )
+            ok_buf = io.StringIO()
+            with redirect_stdout(ok_buf):
+                ok_code = fleet.main(["-c", str(ini), "run", "-o", "local", "--", "Write-Output", "OK"])
+            self.assertEqual(ok_code, 0)
+            self.assertIn("OK", ok_buf.getvalue())
+
+            bad_buf = io.StringIO()
+            with redirect_stdout(bad_buf):
+                bad_code = fleet.main(["-c", str(ini), "run", "-o", "local", "--", "NoSuchCommandXyz"])
+            self.assertEqual(bad_code, 1)
+            self.assertIn("FAIL", bad_buf.getvalue())
+
+    def test_run_parallel_empty(self):
+        with redirect_stdout(io.StringIO()):
+            self.assertEqual(fleet.run_parallel([], 8, 10), 0)
 
 
 class CliTests(unittest.TestCase):

@@ -37,7 +37,6 @@ IS_WINDOWS = os.name == "nt"
 IS_MAC = sys.platform == "darwin"
 INCLUDE_LINE = "Include ~/.ssh/fleet.conf"
 INCLUDE_RE = re.compile(r"(?m)^\s*Include\s+~/\.ssh/fleet\.conf\s*$")
-WIN_SSH = "C:/Windows/System32/OpenSSH/ssh.exe"
 NAME_RE = re.compile(r"^[A-Za-z0-9._-]+$")
 GIT_SHORTCUTS = {
     "pull": ["pull", "--ff-only"],
@@ -45,6 +44,20 @@ GIT_SHORTCUTS = {
     "status": ["status", "-sb"],
     "fetch": ["fetch", "--all", "--prune"],
 }
+
+
+def _windows_openssh_path() -> str:
+    """定位 Windows 自带 OpenSSH；不存在时退回 PATH 里的 ssh。"""
+    p = Path(os.environ.get("WINDIR", r"C:\Windows")) / "System32" / "OpenSSH" / "ssh.exe"
+    if p.is_file():
+        return p.as_posix()
+    found = shutil.which("ssh")
+    if found:
+        return f'"{found}"' if " " in found else found.replace("\\", "/")
+    return "ssh"
+
+
+WIN_SSH = _windows_openssh_path()
 
 
 class FleetError(Exception):
@@ -343,21 +356,49 @@ def psq(s: str) -> str:
 
 def ps_encoded(script: str) -> str:
     """在 Windows 远端执行 PowerShell：编码后传输，不受远端默认 shell（cmd 或 PowerShell）和引号影响。"""
+    return " ".join(ps_encoded_args(script))
+
+
+def ps_encoded_args(script: str) -> List[str]:
+    """PowerShell -EncodedCommand 的参数列表（本机执行时避免走 cmd.exe）。"""
     enc = base64.b64encode(script.encode("utf-16-le")).decode("ascii")
-    return f"powershell -NoProfile -NonInteractive -EncodedCommand {enc}"
+    return ["powershell", "-NoProfile", "-NonInteractive", "-EncodedCommand", enc]
+
+
+PS_PROLOGUE = (
+    "$ProgressPreference = 'SilentlyContinue'; "
+    "[Console]::OutputEncoding = [Text.UTF8Encoding]::new($false); "
+    "$OutputEncoding = [Text.UTF8Encoding]::new($false); "
+)
+
+
+def ps_wrap(script: str) -> str:
+    """包住用户命令：UTF-8 输出、抑制 progress，并把 cmdlet 错误变成非零退出码。"""
+    return (
+        PS_PROLOGUE
+        + "$ErrorActionPreference = 'Stop'; $global:LASTEXITCODE = 0; "
+        + "try {\n"
+        + script
+        + "\nif ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }\n"
+        + "exit 0\n"
+        + "} catch {\n"
+        + "  Write-Output ('ERROR: ' + $_.Exception.Message)\n"
+        + "  exit 1\n"
+        + "}"
+    )
 
 
 def git_remote_command(h: Host, repo: str, git_args: Sequence[str]) -> str:
     if h.windows:
         args = " ".join(psq(a) for a in git_args)
-        return ps_encoded(f"Set-Location -LiteralPath {psq(repo)}; git {args}; exit $LASTEXITCODE")
+        return ps_encoded(ps_wrap(f"Set-Location -LiteralPath {psq(repo)}; git {args}"))
     args = " ".join(shlex.quote(a) for a in git_args)
     return f"cd {shlex.quote(repo)} && GIT_TERMINAL_PROMPT=0 git {args}"
 
 
 def shell_remote_command(h: Host, command: str) -> str:
     if h.windows:
-        return ps_encoded(command + "; exit $LASTEXITCODE")
+        return ps_encoded(ps_wrap(command))
     return command
 
 
@@ -475,7 +516,7 @@ def run_parallel(tasks: List[Task], jobs: int, timeout: int) -> int:
 
     with ThreadPoolExecutor(max_workers=max(1, jobs)) as pool:
         results = list(pool.map(one, tasks))
-    width = max(len(t.host) for t in tasks)
+    width = max((len(t.host) for t in tasks), default=0)
     failed = 0
     for t, (code, out) in zip(tasks, results):
         head = f"{t.host:<{width}}  {t.label}"
@@ -901,7 +942,10 @@ def cmd_run(fl: Fleet, a: argparse.Namespace) -> int:
     tasks = []
     for h in fl.select(a.only):
         if h.alias == fl.self_alias:
-            tasks.append(Task(h.alias, command, [command], shell=True))
+            if IS_WINDOWS:
+                tasks.append(Task(h.alias, command, ps_encoded_args(ps_wrap(command))))
+            else:
+                tasks.append(Task(h.alias, command, [command], shell=True))
         else:
             tasks.append(Task(h.alias, command, ssh_args(h.alias, shell_remote_command(h, command))))
     if a.dry_run:
@@ -1029,12 +1073,22 @@ def build_parser() -> argparse.ArgumentParser:
     return p
 
 
+def _force_utf8_stdio() -> None:
+    """Windows 管道/重定向时 Python 默认用 ANSI 代码页，中文会变成 ?。"""
+    if not IS_WINDOWS:
+        return
+    for stream in (sys.stdout, sys.stderr):
+        try:
+            encoding = (stream.encoding or "").lower().replace("-", "")
+            if encoding != "utf8":
+                stream.reconfigure(encoding="utf-8", errors="replace")  # type: ignore[attr-defined]
+        except (AttributeError, OSError, ValueError):
+            pass
+
+
 def main(argv: Optional[Sequence[str]] = None) -> int:
+    _force_utf8_stdio()
     Color.init()
-    try:
-        sys.stdout.reconfigure(errors="replace")  # type: ignore[attr-defined]
-    except Exception:
-        pass
     parser = build_parser()
     a = parser.parse_args(argv)
     if not a.cmd:
