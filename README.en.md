@@ -58,6 +58,35 @@ them to GitHub / GitLab SSH Keys (or repository Deploy Keys), then run
 `setup` is idempotent: completed steps are skipped. After adding a host, edit
 `fleet.ini` and run it again.
 
+## One-command bootstrap
+
+To skip the manual steps above, run:
+
+```bash
+fleet bootstrap
+```
+
+It will:
+
+1. Check `ssh` and `git`
+2. Scan `~/.ssh/config` and `~/.gitconfig` if no config exists, and write
+   `~/.fleet/fleet.ini`
+3. Run `fleet setup` (generate keys, configure ssh-agent, set up Git, install
+   public keys on every host, deploy the remote config)
+4. Run the self-check
+
+Common options:
+
+```bash
+fleet bootstrap -n              # preview the plan, change nothing
+fleet bootstrap --example       # use the sample config when none exists
+fleet bootstrap -o us01         # deploy one host only
+fleet bootstrap -c ./fleet.ini  # use a specific config file
+```
+
+Python 3.8+ must be installed first. `fleet bootstrap` checks `ssh` and `git`
+and prints the right install command for your OS if either is missing.
+
 ## Configuration
 
 The config file is looked up in this order: `-c path` → `FLEET_CONFIG` →
@@ -101,6 +130,7 @@ dir = ~/work/               # repositories under this directory use this identit
 | Command | Description |
 | --- | --- |
 | `fleet init [path] [--example]` | Scan the home directory for a config; `--example` writes the sample |
+| `fleet bootstrap [-n] [-o host]` | One command: config + setup + self-check |
 | `fleet ls` | List hosts, routes, and Git accounts |
 | `fleet setup [-n] [-o host]` | One-pass initialization; `-n` only prints the plan |
 | `fleet check [-o host]` | Check passwordless login and Git accounts |

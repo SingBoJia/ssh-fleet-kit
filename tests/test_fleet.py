@@ -314,6 +314,46 @@ class ScanTests(unittest.TestCase):
             self.assertNotIn("[host web1]", text)
 
 
+class BootstrapTests(unittest.TestCase):
+    def test_bootstrap_creates_config_and_runs_setup(self):
+        with tempfile.TemporaryDirectory() as d:
+            p = Path(d) / "fleet.ini"
+            scan = fleet.ScanResult(hosts=[fleet.Host("h1", "192.0.2.1")], key="id_ed25519")
+            with mock.patch.object(fleet, "scan_home", return_value=scan), \
+                    mock.patch.object(fleet.shutil, "which", return_value="found"), \
+                    mock.patch.object(fleet, "cmd_setup", return_value=0) as setup:
+                args = fleet.argparse.Namespace(config=str(p), example=False, dry_run=False, only=None)
+                with redirect_stdout(io.StringIO()):
+                    self.assertEqual(fleet.cmd_bootstrap(args), 0)
+            self.assertTrue(p.exists())
+            self.assertIn("[host h1]", p.read_text(encoding="utf-8"))
+            setup.assert_called_once()
+
+    def test_bootstrap_reports_missing_commands(self):
+        with tempfile.TemporaryDirectory() as d:
+            p = Path(d) / "fleet.ini"
+            scan = fleet.ScanResult(hosts=[fleet.Host("h1", "192.0.2.1")], key="id_ed25519")
+            with mock.patch.object(fleet, "scan_home", return_value=scan), \
+                    mock.patch.object(fleet.shutil, "which", return_value=None), \
+                    mock.patch.object(fleet, "cmd_setup") as setup:
+                args = fleet.argparse.Namespace(config=str(p), example=False, dry_run=False, only=None)
+                with redirect_stdout(io.StringIO()):
+                    self.assertEqual(fleet.cmd_bootstrap(args), 1)
+            self.assertTrue(p.exists())
+            setup.assert_not_called()
+
+    def test_bootstrap_stops_on_example_config(self):
+        with tempfile.TemporaryDirectory() as d:
+            p = Path(d) / "fleet.ini"
+            with mock.patch.object(fleet, "scan_home", return_value=fleet.ScanResult()), \
+                    mock.patch.object(fleet, "cmd_setup") as setup:
+                args = fleet.argparse.Namespace(config=str(p), example=False, dry_run=False, only=None)
+                with redirect_stdout(io.StringIO()):
+                    self.assertEqual(fleet.cmd_bootstrap(args), 1)
+            self.assertIn("[host web1]", p.read_text(encoding="utf-8"))
+            setup.assert_not_called()
+
+
 class CliTests(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()

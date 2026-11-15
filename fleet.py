@@ -7,6 +7,7 @@
 
 常用命令：
   fleet init                 扫描 ~/.ssh/config 和 ~/.gitconfig 生成 fleet.ini
+  fleet bootstrap            一键：生成配置 + setup + 自检
   fleet setup                一次性初始化：密钥、SSH 配置、Git 身份、分发公钥、下发远端配置
   fleet ssh [别名]           登录某台机器；不写别名时弹出选择菜单
   fleet git pull             所有机器、所有仓库并行 git pull（还有 push / status / fetch）
@@ -32,7 +33,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable, Dict, List, Optional, Sequence, Tuple
 
-__version__ = "1.0.0"
+__version__ = "1.1.0"
 
 IS_WINDOWS = os.name == "nt"
 IS_MAC = sys.platform == "darwin"
@@ -1034,6 +1035,69 @@ def cmd_init(a: argparse.Namespace) -> int:
     return 0
 
 
+def _missing_commands() -> List[str]:
+    missing = []
+    for name in ("ssh", "git"):
+        if not shutil.which(name):
+            missing.append(name)
+    return missing
+
+
+def _install_hint() -> str:
+    if IS_WINDOWS:
+        return ("Windows：Git 用 winget install --id Git.Git -e 安装；"
+                "OpenSSH 在「设置 → 系统 → 可选功能」添加「OpenSSH 客户端」。")
+    if IS_MAC:
+        return "macOS：xcode-select --install；没有 Git 时 brew install git。"
+    return "Linux：用包管理器安装 openssh-client 和 git（例如 sudo apt install openssh-client git）。"
+
+
+def cmd_bootstrap(a: argparse.Namespace) -> int:
+    """一键：准备配置、检查依赖、执行 setup，并完成自检。"""
+    p: Optional[Path] = None
+    used_example = False
+    if a.config:
+        p = Path(a.config).expanduser()
+    else:
+        try:
+            p = find_config(None)
+        except FleetError:
+            p = Path.home() / ".fleet" / "fleet.ini"
+    if not p.exists():
+        if a.example:
+            text, summary = EXAMPLE_INI, "已生成示例配置"
+        else:
+            scan = scan_home()
+            if scan.hosts or scan.git:
+                text = render_scanned_config(scan)
+                summary = f"已扫描到 {len(scan.hosts)} 台主机、{len(scan.git)} 个 Git 账号"
+            else:
+                text, summary = EXAMPLE_INI, "没有扫描到主机，已生成示例配置"
+                used_example = True
+        p.parent.mkdir(parents=True, exist_ok=True)
+        with open(p, "w", encoding="utf-8", newline="\n") as f:
+            f.write(text)
+        print(f"{summary}：{p}")
+    if used_example or _read_text(p).strip() == EXAMPLE_INI.strip():
+        note(f"{p} 还是示例配置，请先把主机信息改成你自己的，再运行 fleet bootstrap")
+        return 1
+    fl = load_config(str(p))
+    hosts = [h for h in fl.ordered() if h in fl.select(a.only) and h.alias != fl.self_alias]
+    if a.dry_run:
+        setup_plan(fl, hosts)
+        return 0
+    missing = _missing_commands()
+    if missing:
+        fail("缺少命令：" + "、".join(missing))
+        note(_install_hint())
+        return 1
+    print("\n开始一键部署；需要密码的机器会逐台提示。")
+    code = cmd_setup(fl, argparse.Namespace(dry_run=False, only=a.only))
+    if code == 0:
+        ok("一键部署完成")
+    return code
+
+
 def cmd_ls(fl: Fleet, a: argparse.Namespace) -> int:
     w = max([len(h.alias) for h in fl.hosts] + [4])
     for h in fl.hosts:
@@ -1302,6 +1366,11 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("--force", action="store_true", help="覆盖已有文件")
     s.add_argument("--example", action="store_true", help="生成示例配置，不扫描家目录")
 
+    s = sub.add_parser("bootstrap", help="一键：生成配置 + setup + 自检")
+    s.add_argument("-n", "--dry-run", action="store_true", help="只显示将要执行的操作")
+    s.add_argument("-o", "--only", help="只处理这些机器，逗号分隔")
+    s.add_argument("--example", action="store_true", help="没有配置时生成示例配置")
+
     sub.add_parser("ls", help="列出机器、访问路线和 Git 账号")
 
     s = sub.add_parser("config", help="打印生成的 SSH 配置")
@@ -1367,6 +1436,8 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     try:
         if a.cmd == "init":
             return cmd_init(a)
+        if a.cmd == "bootstrap":
+            return cmd_bootstrap(a)
         if not shutil.which("ssh"):
             raise FleetError("没有找到 ssh 命令。Windows：设置 → 系统 → 可选功能 → 添加「OpenSSH 客户端」")
         fl = load_config(a.config)

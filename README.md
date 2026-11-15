@@ -52,6 +52,32 @@ fleet check               # 检查每台机器和每个 Git 账号
 
 `setup` 可以重复运行：已经完成的步骤会跳过。新增机器后改好 `fleet.ini`，再运行一次即可。
 
+## 一键部署
+
+如果不想手动执行上面的步骤，直接运行：
+
+```bash
+fleet bootstrap
+```
+
+它会自动完成：
+
+1. 检查 `ssh` 和 `git`
+2. 没有配置时扫描 `~/.ssh/config` 和 `~/.gitconfig`，生成 `~/.fleet/fleet.ini`
+3. 执行 `fleet setup`（生成密钥、配置 ssh-agent、设置 Git、给每台机器装公钥、下发远端配置）
+4. 执行自检
+
+常用参数：
+
+```bash
+fleet bootstrap -n              # 只预览计划，不做任何改动
+fleet bootstrap --example       # 没有配置时使用示例配置
+fleet bootstrap -o us01         # 只部署一台机器
+fleet bootstrap -c ./fleet.ini  # 指定配置文件
+```
+
+Python 3.8+ 需要预先安装；`fleet bootstrap` 会检查 `ssh` 和 `git`，缺失时打印对应系统的安装命令。
+
 ## 配置文件
 
 配置文件按这个顺序查找：`-c 路径` → 环境变量 `FLEET_CONFIG` → 当前目录的 `fleet.ini` → `~/.fleet/fleet.ini`。完整示例见 [fleet.example.ini](fleet.example.ini)。
@@ -93,6 +119,7 @@ dir = ~/work/               # 这个目录下的仓库自动使用这个身份
 | 命令 | 作用 |
 | --- | --- |
 | `fleet init [路径] [--example]` | 扫描家目录生成配置；`--example` 生成示例 |
+| `fleet bootstrap [-n] [-o 机器]` | 一键：生成配置 + setup + 自检 |
 | `fleet ls` | 列出机器、访问路线和 Git 账号 |
 | `fleet setup [-n] [-o 机器]` | 一次性初始化，`-n` 只显示计划 |
 | `fleet check [-o 机器]` | 检查免密登录和 Git 账号 |
